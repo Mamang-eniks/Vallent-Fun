@@ -1822,7 +1822,7 @@ class PremiumOrderView(discord.ui.View):
                 ),
                 color=0xFF4444
             )
-            dm_em.set_footer(text="DOOMINIKS PARADISE · Premium System")
+            dm_em.set_footer(text="Nikoliesamphink · Premium System")
             await user.send(embed=dm_em)
         except:
             pass
