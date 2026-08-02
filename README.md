@@ -111,7 +111,7 @@ sudo systemctl start dooms
 | `!Doom fish` | `mancing`, `fishing` | Mulai mancing |
 | `!Doom coins` | `koin`, `saldo` | Cek koin |
 | `!Doom daily` | `login`, `harian`, `claim` | Klaim koin harian (streak makin gede bonusnya) |
-| `!Doom quest` | `quests`, `misi` | Cek progress quest mancing |
+| `!Doom quest` | `quests`, `misi` | Buka panel quest log (tab Daily/Quests) + klaim reward |
 | `!Doom tebak` | `riddle`, `tebakan` | Main tebak-tebakan |
 | `!Doom addtebak` | `addriddle`, `tambahtebak` | Tambah soal tebakan custom |
 | `!Doom listtebak` | `listriddle`, `tebaklist` | List soal tebakan custom |
@@ -140,6 +140,7 @@ sudo systemctl start dooms
 | `!Doom help` | `h` | Tampilkan help |
 
 ### 👑 Owner Only
+*(Section ini otomatis disembunyikan dari `!Doom help` kalau yang buka bukan Owner Bot — cuma didaftar di sini buat referensi lo)*
 
 | Command | Alias | Deskripsi |
 |---------|-------|-----------|
@@ -157,7 +158,7 @@ sudo systemctl start dooms
 |---------|-----------|
 | `/fish` | Fishing game |
 | `/daily` | Klaim koin harian |
-| `/quest` | Cek progress quest mancing |
+| `/quest` | Buka panel quest log (tab Daily/Quests) + klaim reward |
 | `/tebak` | Buka Arena Tebak-Tebakan |
 | `/tambahsoal` | Tambah soal Arena Tebak yang aktif |
 | `/addtebak` | Tambah soal tebakan custom |
@@ -203,11 +204,11 @@ sudo systemctl start dooms
 - 🦈 Rare: Tuna (100), Hiu Kecil (200)
 - 🐉 Legendary: Duyung (500), Naga (1000)
 
-> ⏰ Cooldown mancing: **10 detik**
+> ⏰ Cooldown mancing: **10 detik** (notif cooldown otomatis ilang sendiri pas waktunya abis)
 > 🔒 Inventori bersifat privat, hanya bisa dilihat sendiri
 
-### 🎯 Quest Mancing
-Reward otomatis masuk begitu total tangkapan lo nyampe target — gak perlu klaim manual:
+### 🎯 Quest Log Panel
+`!Doom quest` / `/quest` buka panel quest log interaktif (gaya tab Daily/Quests) dengan tombol **Claim**. Beda dari sebelumnya, reward quest **gak otomatis masuk** — begitu target kecapai, quest berstatus "🎁 SIAP DIKLAIM", tinggal buka panel dan pencet **Claim**:
 
 | Quest | Target | Reward |
 |-------|--------|--------|
@@ -216,9 +217,12 @@ Reward otomatis masuk begitu total tangkapan lo nyampe target — gak perlu klai
 | 🦈 Mancing Handal | 30 ikan | 500 koin + Pancing Besi gratis |
 | 🔱 Master Pemancing | 60 ikan | 1000 koin + Pancing Karbon gratis |
 | 🐉 Legenda Mancing | 100 ikan | 2500 koin + Pancing Titan gratis |
+| 🗳️ Vote Bot di Top.gg | 1x vote | 150 koin |
+
+Panel yang sama juga punya tab **Daily** buat lihat status & klaim daily login lo tanpa perlu command terpisah.
 
 ### 🎁 Daily Login
-- `!Doom daily` klaim koin tiap 24 jam (100–250 koin base)
+- `!Doom daily` / `/daily` / tab **Daily** di panel quest — klaim koin tiap 24 jam (100–250 koin base)
 - Streak berturut-turut nambah bonus (+15 koin/hari, cap 300 koin)
 - Kalau lewat 48 jam gak klaim, streak reset ke 1
 
@@ -244,6 +248,8 @@ Reward otomatis masuk begitu total tangkapan lo nyampe target — gak perlu klai
 
 ## 🗑️ Fitur yang Sudah Dihapus
 Ticket system, leveling/XP, dan ganti bahasa (`setlang`) sudah dihapus dari bot ini. Bot sekarang fixed pakai Bahasa Indonesia gaul untuk semua user.
+
+> ℹ️ Footer di embed sekarang pakai nama **"Nikoliesamphink"**, sementara judul/nama bot di berbagai tempat lain (activity status, judul embed, dll) tetap **"DOOMINIKS PARADISE"**.
 
 ---
 
