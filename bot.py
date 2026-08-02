@@ -312,44 +312,148 @@ def set_user_daily(user_id: str, record: dict):
     data[str(user_id)] = record
     save_daily_data(data)
 
+def perform_daily_claim(uid: str) -> dict:
+    """
+    Coba klaim daily buat user. Return dict:
+    - success=False, sisa_s=<detik sisa cooldown>  → kalau masih cooldown
+    - success=True, base_reward, streak_bonus, total_reward, streak, total_coins → kalau berhasil
+    """
+    record  = get_user_daily(uid)
+    now     = time.time()
+    elapsed = now - record.get("last_claim", 0)
+    cooldown_s = DAILY_COOLDOWN_H * 3600
 
-# ===================== QUEST MANCING SYSTEM =====================
-# Quest berbasis milestone total tangkapan ikan (total_catch). Reward otomatis
-# diberikan begitu milestone tercapai (koin + kadang upgrade rod gratis).
-FISHING_QUESTS = [
-    {"id": "quest_5",   "target": 5,   "label": "🎣 Pemula Mancing",    "reward_coins": 100,  "reward_rod": None},
-    {"id": "quest_15",  "target": 15,  "label": "🐟 Mancing Rajin",     "reward_coins": 250,  "reward_rod": "Pancing Kayu"},
-    {"id": "quest_30",  "target": 30,  "label": "🦈 Mancing Handal",    "reward_coins": 500,  "reward_rod": "Pancing Besi"},
-    {"id": "quest_60",  "target": 60,  "label": "🔱 Master Pemancing",  "reward_coins": 1000, "reward_rod": "Pancing Karbon"},
-    {"id": "quest_100", "target": 100, "label": "🐉 Legenda Mancing",   "reward_coins": 2500, "reward_rod": "Pancing Titan"},
+    if elapsed < cooldown_s:
+        return {"success": False, "sisa_s": int(cooldown_s - elapsed), "streak": record.get("streak", 0)}
+
+    streak = record.get("streak", 0) + 1 if elapsed <= DAILY_STREAK_GRACE_H * 3600 else 1
+    streak_bonus = min(streak * DAILY_STREAK_BONUS_PER_DAY, DAILY_STREAK_BONUS_CAP)
+    base_reward  = random.randint(DAILY_COIN_MIN, DAILY_COIN_MAX)
+    total_reward = base_reward + streak_bonus
+
+    udata = get_user_fishing(uid)
+    udata["coins"] += total_reward
+    save_user_fishing(uid, udata)
+    set_user_daily(uid, {"last_claim": now, "streak": streak})
+
+    return {
+        "success": True, "base_reward": base_reward, "streak_bonus": streak_bonus,
+        "total_reward": total_reward, "streak": streak, "total_coins": udata["coins"],
+    }
+
+
+# ===================== QUEST SYSTEM (Mancing + Vote) =====================
+# Quest dicek dari progress asli user (total tangkapan / status vote), BUKAN
+# auto-reward. Begitu target kecapai, quest berstatus "siap diklaim" dan user
+# harus pencet tombol Claim di panel "!Doom quest" buat narik reward-nya —
+# persis kaya sistem quest log Nocturne Assistant.
+QUEST_LIST = [
+    {"id": "quest_5",    "type": "fish", "target": 5,   "label": "🎣 Pemula Mancing",    "reward_coins": 100,  "reward_rod": None},
+    {"id": "quest_15",   "type": "fish", "target": 15,  "label": "🐟 Mancing Rajin",     "reward_coins": 250,  "reward_rod": "Pancing Kayu"},
+    {"id": "quest_30",   "type": "fish", "target": 30,  "label": "🦈 Mancing Handal",    "reward_coins": 500,  "reward_rod": "Pancing Besi"},
+    {"id": "quest_60",   "type": "fish", "target": 60,  "label": "🔱 Master Pemancing",  "reward_coins": 1000, "reward_rod": "Pancing Karbon"},
+    {"id": "quest_100",  "type": "fish", "target": 100, "label": "🐉 Legenda Mancing",   "reward_coins": 2500, "reward_rod": "Pancing Titan"},
+    {"id": "quest_vote", "type": "vote", "target": 1,   "label": "🗳️ Vote Bot di Top.gg", "reward_coins": 150,  "reward_rod": None},
 ]
 
-def check_and_award_quests(uid: str) -> list:
-    """
-    Cek progress quest mancing user berdasarkan total_catch.
-    Kalau ada milestone baru yang lolos, kasih reward dan return list quest
-    yang baru saja diselesaikan (buat ditampilkan ke user).
-    """
-    udata = get_user_fishing(uid)
-    claimed = set(udata.get("claimed_quests", []))
-    total   = udata.get("total_catch", 0)
-    newly_completed = []
+def get_quest_progress(uid: str, quest: dict) -> int:
+    """Ambil progress mentah user buat 1 quest, berdasarkan tipe quest-nya."""
+    if quest["type"] == "fish":
+        return get_user_fishing(uid).get("total_catch", 0)
+    if quest["type"] == "vote":
+        return 1 if get_vote_record(uid).get("last_claim") else 0
+    return 0
 
-    for q in FISHING_QUESTS:
+def get_quest_status(uid: str) -> list:
+    """
+    Return list status tiap quest: {**quest, progress, done, ready}
+    - done  = udah diklaim
+    - ready = target kecapai tapi belum diklaim
+    """
+    udata   = get_user_fishing(uid)
+    claimed = set(udata.get("claimed_quests", []))
+    status  = []
+    for q in QUEST_LIST:
+        progress = get_quest_progress(uid, q)
+        done     = q["id"] in claimed
+        ready    = (not done) and progress >= q["target"]
+        status.append({**q, "progress": progress, "done": done, "ready": ready})
+    return status
+
+def claim_ready_quests(uid: str) -> list:
+    """Klaim semua quest yang statusnya 'ready'. Return list quest yang baru diklaim."""
+    udata   = get_user_fishing(uid)
+    claimed = set(udata.get("claimed_quests", []))
+    newly   = []
+    for q in QUEST_LIST:
         if q["id"] in claimed:
             continue
-        if total >= q["target"]:
+        if get_quest_progress(uid, q) >= q["target"]:
             udata["coins"] += q["reward_coins"]
             if q["reward_rod"]:
                 udata["rod"] = q["reward_rod"]
             claimed.add(q["id"])
-            newly_completed.append(q)
-
-    if newly_completed:
+            newly.append(q)
+    if newly:
         udata["claimed_quests"] = list(claimed)
         save_user_fishing(uid, udata)
+    return newly
 
-    return newly_completed
+def build_quests_tab_embed(user: discord.abc.User) -> discord.Embed:
+    uid    = str(user.id)
+    udata  = get_user_fishing(uid)
+    status = get_quest_status(uid)
+    ready_count = sum(1 for q in status if q["ready"])
+
+    lines = []
+    for q in status:
+        reward_txt = f"+{q['reward_coins']} {emoji('coin')}" + (f" + {q['reward_rod']}" if q["reward_rod"] else "")
+        if q["done"]:
+            mark, box = "✅ Selesai", "✅"
+        elif q["ready"]:
+            mark, box = "🎁 SIAP DIKLAIM!", "🎁"
+        else:
+            mark, box = f"{min(q['progress'], q['target'])}/{q['target']}", "⬜"
+        lines.append(f"{box} **{q['label']}** — {mark}  *({reward_txt})*")
+
+    desc = f"Complete quests to earn rewards!\n**Balance:** {udata['coins']} {emoji('coin')}\n\n" + "\n".join(lines)
+
+    if ready_count:
+        desc += f"\n\n🎉 Ada **{ready_count}** quest siap diklaim! Pencet tombol **Claim** di bawah."
+    elif all(q["done"] for q in status):
+        desc += "\n\nUwU Lo udah nyelesain semua quest! Balik lagi kalau ada quest baru~ <3"
+    else:
+        desc += "\n\nTerus mancing atau vote bot buat lanjutin progress quest lo!"
+
+    em = discord.Embed(title=f"📜 @{user.display_name}'s Quest Log", description=desc, color=DARK_RED)
+    em.set_thumbnail(url=user.display_avatar.url)
+    return em
+
+def build_daily_tab_embed(user: discord.abc.User) -> discord.Embed:
+    uid     = str(user.id)
+    record  = get_user_daily(uid)
+    now     = time.time()
+    elapsed = now - record.get("last_claim", 0)
+    cooldown_s = DAILY_COOLDOWN_H * 3600
+
+    if elapsed < cooldown_s:
+        sisa_s = int(cooldown_s - elapsed)
+        h, m   = sisa_s // 3600, (sisa_s % 3600) // 60
+        desc = (
+            f"⏰ Daily lo udah diklaim hari ini!\n"
+            f"Klaim lagi dalam **{h} jam {m} menit**.\n\n"
+            f"**{emoji('streak')} Streak Lo:** {record.get('streak', 0)} hari"
+        )
+    else:
+        preview_streak = record.get("streak", 0) + 1 if elapsed <= DAILY_STREAK_GRACE_H * 3600 else 1
+        desc = (
+            f"{emoji('daily')} Daily lo udah siap diklaim! Pencet tombol **Claim** di bawah.\n\n"
+            f"**{emoji('streak')} Kalau diklaim sekarang, streak jadi:** {preview_streak} hari"
+        )
+
+    em = discord.Embed(title=f"📋 @{user.display_name}'s Daily Login", description=desc, color=DARK_RED)
+    em.set_thumbnail(url=user.display_avatar.url)
+    return em
 
 
 # ===================== EMOJI SERVER SYSTEM =====================
@@ -819,7 +923,7 @@ def premium_required(ctx_or_interaction):
         ),
         color=0xFFD700
     )
-    em.set_footer(text="DOOMINIKS PARADISE · Premium System")
+    em.set_footer(text="Nikoliesamphink · Premium System")
     return False, em
 
 # ===================== PREMIUM COMMAND GATE =====================
@@ -899,7 +1003,7 @@ def premium_block_embed(user_id=None) -> discord.Embed:
     )
     if qris_url:
         em.set_thumbnail(url=qris_url)
-    em.set_footer(text="DOOMINIKS PARADISE · Premium System")
+    em.set_footer(text="Nikoliesamphink · Premium System")
     return em
 
 
@@ -924,7 +1028,7 @@ async def check_premium_gate(ctx, command_name: str) -> bool:
     # Blocked — user belum premium
     # Tampilkan embed premium dengan nama command yang dikunci
     em = premium_block_embed(ctx.author.id)
-    em.set_footer(text=f"DOOMINIKS PARADISE · Premium · Command `{command_name}` is locked")
+    em.set_footer(text=f"Nikoliesamphink · Premium · Command `{command_name}` is locked")
     await ctx.reply(embed=em)
     return True
 
@@ -945,7 +1049,7 @@ async def check_premium_gate_slash(interaction: discord.Interaction, command_nam
         return False
 
     em = premium_block_embed(interaction.user.id)
-    em.set_footer(text=f"DOOMINIKS PARADISE · Premium · Command `/{command_name}` is locked")
+    em.set_footer(text=f"Nikoliesamphink · Premium · Command `/{command_name}` is locked")
     await interaction.response.send_message(embed=em, ephemeral=True)
     return True
 
@@ -1396,6 +1500,14 @@ class FishingMainView(discord.ui.View):
             sisa = round(10 - (now - fishing_cooldowns[uid]))
             await interaction.response.send_message(
                 t("fish_cooldown", interaction.user.id, secs=sisa), ephemeral=True)
+            # Notif otomatis ilang sendiri sesuai sisa detik cooldown-nya
+            async def _auto_dismiss(delay: float):
+                await asyncio.sleep(delay)
+                try:
+                    await interaction.delete_original_response()
+                except Exception:
+                    pass
+            asyncio.create_task(_auto_dismiss(max(sisa, 1)))
             return
         fishing_cooldowns[uid] = now
         udata = get_user_fishing(uid)
@@ -1466,21 +1578,19 @@ class FishingMainView(discord.ui.View):
             )
         await interaction.response.edit_message(embed=em, view=self)
 
-        # Cek & kasih reward quest mancing kalau ada milestone baru tercapai
-        completed_quests = check_and_award_quests(uid)
-        for q in completed_quests:
-            qem = discord.Embed(
-                title=f"{emoji('quest')} Quest Selesai: {q['label']}!",
-                description=(
-                    f"Lo berhasil nangkep **{q['target']} ikan** total! 🎉\n\n"
-                    f"**Reward:** +{q['reward_coins']} {emoji('coin')}"
-                    + (f" & gratis **{q['reward_rod']}** 🎣" if q["reward_rod"] else "")
-                ),
-                color=0x00FF88
-            )
-            qem.set_footer(text="Ketik !Doom quest buat liat semua progress quest lo")
+        # Cek kalau ada quest mancing yang baru "siap diklaim" (belum auto-reward,
+        # user harus klaim manual lewat !Doom quest)
+        newly_ready = [
+            q for q in get_quest_status(uid)
+            if q["type"] == "fish" and q["ready"] and q["progress"] == q["target"]
+        ]
+        if newly_ready:
+            labels = ", ".join(q["label"] for q in newly_ready)
             try:
-                await interaction.followup.send(embed=qem)
+                await interaction.followup.send(
+                    f"{emoji('quest')} **Quest siap diklaim:** {labels}\nKetik `!Doom quest` buat klaim reward-nya!",
+                    ephemeral=True
+                )
             except Exception:
                 pass
 
@@ -1516,6 +1626,90 @@ class FishingMainView(discord.ui.View):
             f"**Koin lo:** {udata['coins']} 🪙\n\n**🎣 Rod:**\n{rod_text}\n\n**🪱 Umpan:**\n{bait_text}"
         )
         await interaction.response.send_message(embed=em, view=ShopBuyView(interaction.user.id), ephemeral=True)
+
+# ===================== QUEST PANEL VIEW (Daily / Quests tab) =====================
+
+class QuestPanelView(discord.ui.View):
+    """Panel quest gaya tab (Daily / Quests) mirip quest log bot lain, dengan tombol Claim."""
+    def __init__(self, user: discord.abc.User, tab: str = "quests"):
+        super().__init__(timeout=120)
+        self.user = user
+        self.user_id = user.id
+        self.tab  = tab  # "daily" atau "quests"
+        self._build_buttons()
+
+    def _build_buttons(self):
+        self.clear_items()
+
+        daily_btn = discord.ui.Button(
+            label="Daily", emoji="📋", row=0,
+            style=discord.ButtonStyle.primary if self.tab == "daily" else discord.ButtonStyle.secondary
+        )
+        quest_btn = discord.ui.Button(
+            label="Quests", emoji="📜", row=0,
+            style=discord.ButtonStyle.primary if self.tab == "quests" else discord.ButtonStyle.secondary
+        )
+        daily_btn.callback = self._switch_daily
+        quest_btn.callback = self._switch_quests
+        self.add_item(daily_btn)
+        self.add_item(quest_btn)
+
+        claim_btn = discord.ui.Button(label="Claim", emoji="🎁", style=discord.ButtonStyle.success, row=1)
+        claim_btn.callback = self._claim
+        self.add_item(claim_btn)
+
+    def _current_embed(self) -> discord.Embed:
+        return build_daily_tab_embed(self.user) if self.tab == "daily" else build_quests_tab_embed(self.user)
+
+    async def _guard(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id != self.user_id:
+            await interaction.response.send_message("❌ Ini bukan quest log lo bro!", ephemeral=True)
+            return False
+        return True
+
+    async def _switch_daily(self, interaction: discord.Interaction):
+        if not await self._guard(interaction): return
+        self.tab = "daily"
+        self._build_buttons()
+        await interaction.response.edit_message(embed=self._current_embed(), view=self)
+
+    async def _switch_quests(self, interaction: discord.Interaction):
+        if not await self._guard(interaction): return
+        self.tab = "quests"
+        self._build_buttons()
+        await interaction.response.edit_message(embed=self._current_embed(), view=self)
+
+    async def _claim(self, interaction: discord.Interaction):
+        if not await self._guard(interaction): return
+        uid = str(self.user_id)
+
+        if self.tab == "daily":
+            result = perform_daily_claim(uid)
+            if not result["success"]:
+                h, m = result["sisa_s"] // 3600, (result["sisa_s"] % 3600) // 60
+                await interaction.response.send_message(f"⏰ Sabar bro, daily lo baru bisa diklaim lagi dalam **{h} jam {m} menit**.", ephemeral=True)
+                return
+            confirm_txt = (
+                f"{emoji('daily')} Daily diklaim! +{result['base_reward']} (base) + {result['streak_bonus']} (streak) = "
+                f"**{result['total_reward']} {emoji('coin')}**. Streak: {result['streak']} hari 🔥"
+            )
+        else:
+            newly = claim_ready_quests(uid)
+            if not newly:
+                await interaction.response.send_message("Belum ada quest yang siap diklaim tuh bro, lanjut mancing/vote dulu!", ephemeral=True)
+                return
+            total_coins = sum(q["reward_coins"] for q in newly)
+            rods_gotten = [q["reward_rod"] for q in newly if q["reward_rod"]]
+            confirm_txt = f"🎉 Berhasil klaim **{len(newly)} quest**! Total +{total_coins} {emoji('coin')}"
+            if rods_gotten:
+                confirm_txt += f" + gratis: {', '.join(rods_gotten)}"
+
+        self._build_buttons()
+        await interaction.response.edit_message(embed=self._current_embed(), view=self)
+        try:
+            await interaction.followup.send(confirm_txt, ephemeral=True)
+        except Exception:
+            pass
 
 class ShopBuyView(discord.ui.View):
     def __init__(self, user_id):
@@ -1783,7 +1977,7 @@ class PremiumOrderView(discord.ui.View):
                 ),
                 inline=False
             )
-            dm_em.set_footer(text="DOOMINIKS PARADISE · Premium System")
+            dm_em.set_footer(text="Nikoliesamphink · Premium System")
             await user.send(embed=dm_em)
         except Exception as e:
             print(f"Gagal DM user premium: {e}")
@@ -2255,7 +2449,7 @@ async def broadcast_maintenance(active: bool, reason: str):
                     ),
                     color=0xFF6600
                 )
-                em.set_footer(text="DOOMINIKS PARADISE · Bot System")
+                em.set_footer(text="Nikoliesamphink · Bot System")
                 em.timestamp = datetime.datetime.now(tz=WIB)
             else:
                 em = discord.Embed(
@@ -2267,7 +2461,7 @@ async def broadcast_maintenance(active: bool, reason: str):
                     ),
                     color=0x00FF00
                 )
-                em.set_footer(text="DOOMINIKS PARADISE · Bot System")
+                em.set_footer(text="Nikoliesamphink · Bot System")
                 em.timestamp = datetime.datetime.now(tz=WIB)
             await target_ch.send(embed=em)
         except Exception as e:
@@ -2313,7 +2507,7 @@ async def on_guild_join(guild: discord.Guild):
             )
             if guild.icon:
                 owner_em.set_thumbnail(url=guild.icon.url)
-            owner_em.set_footer(text="DOOMINIKS PARADISE · Bot System")
+            owner_em.set_footer(text="Nikoliesamphink · Bot System")
             owner_em.timestamp = datetime.datetime.now(tz=WIB)
             await owner.send(embed=owner_em)
         except Exception as e:
@@ -2971,7 +3165,7 @@ async def premium_user_cmd(ctx):
         )
         em.add_field(name="⏳ Subscription Progress", value=bar_txt, inline=False)
         em.add_field(name="🔓 Premium Commands", value=cmd_txt, inline=False)
-        em.set_footer(text="DOOMINIKS PARADISE · Premium System · Thank you for your support! 🙏")
+        em.set_footer(text="Nikoliesamphink · Premium System · Thank you for your support! 🙏")
         await ctx.reply(embed=em)
         return
 
@@ -3024,7 +3218,7 @@ async def premium_user_cmd(ctx):
     )
     if qris_url_main:
         em.set_image(url=qris_url_main)
-    em.set_footer(text="DOOMINIKS PARADISE · Premium System · Select a package below to order")
+    em.set_footer(text="Nikoliesamphink · Premium System · Select a package below to order")
 
     pkg_options = [discord.SelectOption(
         label=k,
@@ -3088,7 +3282,7 @@ async def premium_user_cmd(ctx):
             )
             if qris_url:
                 info_em.set_image(url=qris_url)
-            info_em.set_footer(text="DOOMINIKS PARADISE · Send your payment proof after transfer")
+            info_em.set_footer(text="Nikoliesamphink · Send your payment proof after transfer")
             await interaction.response.send_message(embed=info_em, ephemeral=True)
 
             try:
@@ -3164,7 +3358,7 @@ async def premium_user_cmd(ctx):
                 )
                 if proof_image_url:
                     order_em.set_image(url=proof_image_url)
-                order_em.set_footer(text=f"DOOMINIKS PARADISE · Order ID: {order_id}")
+                order_em.set_footer(text=f"Nikoliesamphink · Order ID: {order_id}")
 
                 sent_ok = False
                 if webhook_url:
@@ -3211,7 +3405,7 @@ async def premium_user_cmd(ctx):
                     ),
                     inline=False
                 )
-                conf_em.set_footer(text="DOOMINIKS PARADISE · Premium System · Thank you for your order!")
+                conf_em.set_footer(text="Nikoliesamphink · Premium System · Thank you for your order!")
                 await interaction.followup.send(embed=conf_em, ephemeral=True)
             except asyncio.TimeoutError:
                 await interaction.followup.send("⏰ Timeout! Order dibatalkan.", ephemeral=True)
@@ -3228,14 +3422,10 @@ async def daily_cmd(ctx):
     if await check_premium_gate(ctx, "daily"):
         return
     uid    = str(ctx.author.id)
-    record = get_user_daily(uid)
-    now    = time.time()
-    elapsed = now - record.get("last_claim", 0)
-    cooldown_s = DAILY_COOLDOWN_H * 3600
+    result = perform_daily_claim(uid)
 
-    if elapsed < cooldown_s:
-        sisa_s = int(cooldown_s - elapsed)
-        sisa_h, sisa_m = sisa_s // 3600, (sisa_s % 3600) // 60
+    if not result["success"]:
+        sisa_h, sisa_m = result["sisa_s"] // 3600, (result["sisa_s"] % 3600) // 60
         em = discord.Embed(
             title="⏰ Udah Klaim Daily Hari Ini!",
             description=f"Sabar bro, klaim lagi dalam **{sisa_h} jam {sisa_m} menit**.",
@@ -3244,35 +3434,19 @@ async def daily_cmd(ctx):
         await ctx.reply(embed=em)
         return
 
-    # Streak: kalau claim masih dalam grace period, streak lanjut. Kalau kelewatan, reset.
-    if elapsed <= DAILY_STREAK_GRACE_H * 3600:
-        streak = record.get("streak", 0) + 1
-    else:
-        streak = 1
-
-    streak_bonus = min(streak * DAILY_STREAK_BONUS_PER_DAY, DAILY_STREAK_BONUS_CAP)
-    base_reward  = random.randint(DAILY_COIN_MIN, DAILY_COIN_MAX)
-    total_reward = base_reward + streak_bonus
-
-    udata = get_user_fishing(uid)
-    udata["coins"] += total_reward
-    save_user_fishing(uid, udata)
-
-    set_user_daily(uid, {"last_claim": now, "streak": streak})
-
     em = discord.Embed(
         title=f"{emoji('daily')} Daily Login Diklaim!",
         description=(
             f"Makasih udah mampir **{ctx.author.display_name}**! 🔥\n\n"
-            f"**{emoji('coin')} Koin Didapat:** +{base_reward} (base) + {streak_bonus} (streak bonus) = **{total_reward} koin**\n"
-            f"**{emoji('streak')} Streak Lo:** {streak} hari berturut-turut\n"
-            f"**{emoji('coin')} Total Koin:** {udata['coins']}\n\n"
+            f"**{emoji('coin')} Koin Didapat:** +{result['base_reward']} (base) + {result['streak_bonus']} (streak bonus) = **{result['total_reward']} koin**\n"
+            f"**{emoji('streak')} Streak Lo:** {result['streak']} hari berturut-turut\n"
+            f"**{emoji('coin')} Total Koin:** {result['total_coins']}\n\n"
             f"Balik lagi besok biar streak-nya jalan terus!"
         ),
         color=0x00FF88
     )
     em.set_thumbnail(url=ctx.author.display_avatar.url)
-    em.set_footer(text="DOOMINIKS PARADISE | Daily Login")
+    em.set_footer(text="Nikoliesamphink | Daily Login")
     await ctx.reply(embed=em)
 
 
@@ -3280,35 +3454,13 @@ async def daily_cmd(ctx):
 
 @bot.command(name="quest", aliases=["quests", "misi"])
 async def quest_cmd(ctx):
-    """Lihat progress quest mancing lo."""
+    """Buka panel quest log (tab Daily / Quests) + tombol Claim."""
     if await check_maintenance(ctx):
         return
     if await check_premium_gate(ctx, "quest"):
         return
-    uid     = str(ctx.author.id)
-    udata   = get_user_fishing(uid)
-    claimed = set(udata.get("claimed_quests", []))
-    total   = udata.get("total_catch", 0)
-
-    lines = []
-    for q in FISHING_QUESTS:
-        done = q["id"] in claimed
-        mark = "✅" if done else f"{min(total, q['target'])}/{q['target']}"
-        reward_txt = f"+{q['reward_coins']} {emoji('coin')}"
-        if q["reward_rod"]:
-            reward_txt += f" + {q['reward_rod']}"
-        lines.append(f"{'✅' if done else '⬜'} **{q['label']}** — {mark}  *({reward_txt})*")
-
-    em = discord.Embed(
-        title=f"{emoji('quest')} Quest Mancing Lo",
-        description=(
-            f"**Total Tangkapan:** {total} ikan\n\n" + "\n".join(lines) +
-            "\n\nQuest otomatis kelar & reward otomatis masuk begitu lo capai targetnya, tinggal mancing terus!"
-        ),
-        color=DARK_RED
-    )
-    em.set_thumbnail(url=ctx.author.display_avatar.url)
-    await ctx.reply(embed=em)
+    view = QuestPanelView(ctx.author, tab="quests")
+    await ctx.reply(embed=view._current_embed(), view=view)
 
 
 # ===================== NO-PREFIX COMMAND (Owner Only) =====================
@@ -3424,15 +3576,16 @@ async def help_cmd(ctx):
     em.add_field(name="📢 Utility",   value="`embed` `setmainchannel` `sticky` `autoresponse` `giveaway` `event` `addemoji`", inline=False)
     em.add_field(name="👑 Premium",   value="`premium` — Lihat info & order premium",                  inline=False)
     em.add_field(name="🗳️ Vote",      value="`vote` — Link vote Top.gg | `claimvote` — Claim reward vote", inline=False)
-    em.add_field(
-        name="👑 Owner Only",
-        value=(
-            "`noprefix add/remove/list @user` — Kasih/cabut akses command tanpa prefix\n"
-            "`setemoji <key> <emoji>` — Ganti emoji bot pakai emoji custom server"
-        ),
-        inline=False
-    )
-    em.add_field(name="📡 Notifikasi", value="`setmaintenancechannel #channel` — Pilih channel notif maintenance *(owner bot only)*", inline=False)
+    if ctx.author.id == OWNER_ID:
+        em.add_field(
+            name="👑 Owner Only",
+            value=(
+                "`noprefix add/remove/list @user` — Kasih/cabut akses command tanpa prefix\n"
+                "`setemoji <key> <emoji>` — Ganti emoji bot pakai emoji custom server\n"
+                "`setmaintenancechannel #channel` — Pilih channel notif maintenance"
+            ),
+            inline=False
+        )
     em.set_footer(text="Prefix: !Doom | Semua command bisa pake slash juga! | Ketik !Doom quest buat cek progress mancing lo")
     await ctx.reply(embed=em)
 
@@ -3914,71 +4067,34 @@ async def slash_leaderboard(interaction: discord.Interaction):
 async def slash_daily(interaction: discord.Interaction):
     if await check_premium_gate_slash(interaction, "daily"): return
     uid    = str(interaction.user.id)
-    record = get_user_daily(uid)
-    now    = time.time()
-    elapsed = now - record.get("last_claim", 0)
-    cooldown_s = DAILY_COOLDOWN_H * 3600
+    result = perform_daily_claim(uid)
 
-    if elapsed < cooldown_s:
-        sisa_s = int(cooldown_s - elapsed)
-        sisa_h, sisa_m = sisa_s // 3600, (sisa_s % 3600) // 60
+    if not result["success"]:
+        sisa_h, sisa_m = result["sisa_s"] // 3600, (result["sisa_s"] % 3600) // 60
         await interaction.response.send_message(
             embed=discord.Embed(title="⏰ Udah Klaim Daily Hari Ini!", description=f"Sabar bro, klaim lagi dalam **{sisa_h} jam {sisa_m} menit**.", color=DARK_RED),
             ephemeral=True
         )
         return
 
-    if elapsed <= DAILY_STREAK_GRACE_H * 3600:
-        streak = record.get("streak", 0) + 1
-    else:
-        streak = 1
-
-    streak_bonus = min(streak * DAILY_STREAK_BONUS_PER_DAY, DAILY_STREAK_BONUS_CAP)
-    base_reward  = random.randint(DAILY_COIN_MIN, DAILY_COIN_MAX)
-    total_reward = base_reward + streak_bonus
-
-    udata = get_user_fishing(uid)
-    udata["coins"] += total_reward
-    save_user_fishing(uid, udata)
-    set_user_daily(uid, {"last_claim": now, "streak": streak})
-
     em = discord.Embed(
         title=f"{emoji('daily')} Daily Login Diklaim!",
         description=(
             f"Makasih udah mampir **{interaction.user.display_name}**! 🔥\n\n"
-            f"**{emoji('coin')} Koin Didapat:** +{base_reward} (base) + {streak_bonus} (streak bonus) = **{total_reward} koin**\n"
-            f"**{emoji('streak')} Streak Lo:** {streak} hari berturut-turut\n"
-            f"**{emoji('coin')} Total Koin:** {udata['coins']}"
+            f"**{emoji('coin')} Koin Didapat:** +{result['base_reward']} (base) + {result['streak_bonus']} (streak bonus) = **{result['total_reward']} koin**\n"
+            f"**{emoji('streak')} Streak Lo:** {result['streak']} hari berturut-turut\n"
+            f"**{emoji('coin')} Total Koin:** {result['total_coins']}"
         ),
         color=0x00FF88
     )
     em.set_thumbnail(url=interaction.user.display_avatar.url)
     await interaction.response.send_message(embed=em)
 
-@tree.command(name="quest", description="Lihat progress quest mancing lo")
+@tree.command(name="quest", description="Buka panel quest log (Daily / Quests) + klaim reward")
 async def slash_quest(interaction: discord.Interaction):
     if await check_premium_gate_slash(interaction, "quest"): return
-    uid     = str(interaction.user.id)
-    udata   = get_user_fishing(uid)
-    claimed = set(udata.get("claimed_quests", []))
-    total   = udata.get("total_catch", 0)
-
-    lines = []
-    for q in FISHING_QUESTS:
-        done = q["id"] in claimed
-        mark = "✅" if done else f"{min(total, q['target'])}/{q['target']}"
-        reward_txt = f"+{q['reward_coins']} {emoji('coin')}"
-        if q["reward_rod"]:
-            reward_txt += f" + {q['reward_rod']}"
-        lines.append(f"{'✅' if done else '⬜'} **{q['label']}** — {mark}  *({reward_txt})*")
-
-    em = discord.Embed(
-        title=f"{emoji('quest')} Quest Mancing Lo",
-        description=f"**Total Tangkapan:** {total} ikan\n\n" + "\n".join(lines),
-        color=DARK_RED
-    )
-    em.set_thumbnail(url=interaction.user.display_avatar.url)
-    await interaction.response.send_message(embed=em)
+    view = QuestPanelView(interaction.user, tab="quests")
+    await interaction.response.send_message(embed=view._current_embed(), view=view)
 
 @tree.command(name="noprefix", description="Owner: atur akses no-prefix user lain")
 @app_commands.describe(action="add / remove / list", member="User yang mau diatur")
@@ -4079,7 +4195,7 @@ async def slash_setmaintenancechannel(interaction: discord.Interaction, channel:
         ),
         color=0x00FF88
     )
-    em.set_footer(text=f"DOOMINIKS PARADISE · Bot System · {interaction.guild.name}")
+    em.set_footer(text=f"Nikoliesamphink · Bot System · {interaction.guild.name}")
     await interaction.response.send_message(embed=em, ephemeral=True)
     # Kirim konfirmasi ke channel yang dipilih
     try:
@@ -4093,7 +4209,7 @@ async def slash_setmaintenancechannel(interaction: discord.Interaction, channel:
             ),
             color=DARK_RED
         )
-        notif_em.set_footer(text="DOOMINIKS PARADISE · Bot System")
+        notif_em.set_footer(text="Nikoliesamphink · Bot System")
         notif_em.timestamp = datetime.datetime.now(tz=WIB)
         await channel.send(embed=notif_em)
     except:
@@ -4123,7 +4239,7 @@ async def prefix_setmaintenancechannel(ctx, channel: discord.TextChannel = None)
         ),
         color=0x00FF88
     )
-    em.set_footer(text=f"DOOMINIKS PARADISE · Bot System · {ctx.guild.name}")
+    em.set_footer(text=f"Nikoliesamphink · Bot System · {ctx.guild.name}")
     await ctx.reply(embed=em)
     try:
         notif_em = discord.Embed(
@@ -4136,7 +4252,7 @@ async def prefix_setmaintenancechannel(ctx, channel: discord.TextChannel = None)
             ),
             color=DARK_RED
         )
-        notif_em.set_footer(text="DOOMINIKS PARADISE · Bot System")
+        notif_em.set_footer(text="Nikoliesamphink · Bot System")
         notif_em.timestamp = datetime.datetime.now(tz=WIB)
         await channel.send(embed=notif_em)
     except:
@@ -4160,7 +4276,7 @@ async def vote_cmd(ctx):
         ),
         color=DARK_RED
     )
-    em.set_footer(text="DOOMINIKS PARADISE | Vote every 12 hours!")
+    em.set_footer(text="Nikoliesamphink | Vote every 12 hours!")
     em.set_thumbnail(url=bot.user.display_avatar.url)
     await ctx.reply(embed=em)
 
@@ -4242,7 +4358,7 @@ async def claimvote_cmd(ctx):
         color=0x00FF88
     )
     em.set_thumbnail(url=ctx.author.display_avatar.url)
-    em.set_footer(text="DOOMINIKS PARADISE | Thanks for voting! 🗳️")
+    em.set_footer(text="Nikoliesamphink | Thanks for voting! 🗳️")
     await ctx.reply(embed=em)
 
 # ===================== TOP.GG WEBHOOK SERVER (Flask) =====================
