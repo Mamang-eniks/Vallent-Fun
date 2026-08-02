@@ -2,6 +2,7 @@ import discord
 from discord.ext import commands, tasks
 from discord import app_commands
 import asyncio
+import copy
 import json
 import os
 import random
@@ -233,6 +234,7 @@ def get_user_fishing(user_id: str):
             "inventory": [],
             "total_catch": 0,
             "last_fish": 0,
+            "claimed_quests": [],
         }
         save_fishing_data(data)
     return data[uid]
@@ -244,8 +246,6 @@ def save_user_fishing(user_id: str, udata: dict):
 
 def get_warns():       return load_json("warns.json", {})
 def save_warns(d):     save_json("warns.json", d)
-def get_levels():      return load_json("levels.json", {})
-def save_levels(d):    save_json("levels.json", d)
 def get_config():      return load_json("config.json", {})
 def save_config(d):    save_json("config.json", d)
 def get_autoresponse():    return load_json("autoresponse.json", {})
@@ -254,8 +254,6 @@ def get_sticky():      return load_json("sticky.json", {})
 def save_sticky(d):    save_json("sticky.json", d)
 def get_giveaways():   return load_json("giveaways.json", {})
 def save_giveaways(d): save_json("giveaways.json", d)
-def get_tickets():     return load_json("tickets.json", {"panels": {}, "tickets": {}})
-def save_tickets(d):   save_json("tickets.json", d)
 def get_premium_data():   return load_json("premium.json", {"users": {}, "settings": {}, "packages": {}, "locked_commands": []})
 def save_premium_data(d): save_json("premium.json", d)
 def get_premium_orders():   return load_json("premium_orders.json", {})
@@ -265,19 +263,128 @@ def dark_red_embed(title="", description="", **kwargs):
     return discord.Embed(title=title, description=description, color=DARK_RED, **kwargs)
 
 
-# ===================== LANGUAGE SYSTEM =====================
-# Bahasa: id_gaul (khusus owner bot), id (Indonesia Gaul untuk user/admin), en (default), de, ar, th, ja
+# ===================== NO-PREFIX SYSTEM (Owner Only Grant) =====================
+# Owner bot bisa kasih akses "no prefix" ke user tertentu, jadi mereka bisa
+# ketik command langsung tanpa "!Doom " di depannya (misal: "fish" alih-alih
+# "!Doom fish"). Owner bot sendiri OTOMATIS punya akses ini.
 
-SUPPORTED_LANGS = {
-    "id_gaul": "🇮🇩 Indonesia Gaul (Owner Only)",
-    "id":      "🇮🇩 Indonesia Gaul",
-    "en":      "🇬🇧 English",
-    "de":      "🇩🇪 Deutsch",
-    "ar":      "🇸🇦 العربية",
-    "th":      "🇹🇭 ภาษาไทย",
-    "ja":      "🇯🇵 日本語",
+def get_noprefix_users() -> list:
+    return load_json("noprefix.json", {"users": []}).get("users", [])
+
+def save_noprefix_users(users: list):
+    save_json("noprefix.json", {"users": list(dict.fromkeys(users))})
+
+def is_noprefix_user(user_id) -> bool:
+    uid = int(user_id)
+    if OWNER_ID and uid == OWNER_ID:
+        return True
+    return str(uid) in get_noprefix_users()
+
+def get_all_command_names() -> set:
+    """Kumpulan semua nama command + alias prefix yang valid (lowercase)."""
+    names = set()
+    for cmd in bot.commands:
+        names.add(cmd.name.lower())
+        names.update(a.lower() for a in cmd.aliases)
+    return names
+
+
+# ===================== DAILY LOGIN SYSTEM =====================
+DAILY_COIN_MIN   = 100
+DAILY_COIN_MAX   = 250
+DAILY_STREAK_BONUS_PER_DAY = 15   # bonus koin tiap hari streak, di-cap
+DAILY_STREAK_BONUS_CAP     = 300  # bonus maksimal dari streak
+DAILY_COOLDOWN_H = 24
+DAILY_STREAK_GRACE_H = 48  # kalau claim lewat dari ini, streak reset ke 1
+
+def get_daily_data() -> dict:
+    return load_json("daily.json", {})
+
+def save_daily_data(d: dict):
+    save_json("daily.json", d)
+
+def get_user_daily(user_id: str) -> dict:
+    data = get_daily_data()
+    return data.get(str(user_id), {"last_claim": 0, "streak": 0})
+
+def set_user_daily(user_id: str, record: dict):
+    data = get_daily_data()
+    data[str(user_id)] = record
+    save_daily_data(data)
+
+
+# ===================== QUEST MANCING SYSTEM =====================
+# Quest berbasis milestone total tangkapan ikan (total_catch). Reward otomatis
+# diberikan begitu milestone tercapai (koin + kadang upgrade rod gratis).
+FISHING_QUESTS = [
+    {"id": "quest_5",   "target": 5,   "label": "🎣 Pemula Mancing",    "reward_coins": 100,  "reward_rod": None},
+    {"id": "quest_15",  "target": 15,  "label": "🐟 Mancing Rajin",     "reward_coins": 250,  "reward_rod": "Pancing Kayu"},
+    {"id": "quest_30",  "target": 30,  "label": "🦈 Mancing Handal",    "reward_coins": 500,  "reward_rod": "Pancing Besi"},
+    {"id": "quest_60",  "target": 60,  "label": "🔱 Master Pemancing",  "reward_coins": 1000, "reward_rod": "Pancing Karbon"},
+    {"id": "quest_100", "target": 100, "label": "🐉 Legenda Mancing",   "reward_coins": 2500, "reward_rod": "Pancing Titan"},
+]
+
+def check_and_award_quests(uid: str) -> list:
+    """
+    Cek progress quest mancing user berdasarkan total_catch.
+    Kalau ada milestone baru yang lolos, kasih reward dan return list quest
+    yang baru saja diselesaikan (buat ditampilkan ke user).
+    """
+    udata = get_user_fishing(uid)
+    claimed = set(udata.get("claimed_quests", []))
+    total   = udata.get("total_catch", 0)
+    newly_completed = []
+
+    for q in FISHING_QUESTS:
+        if q["id"] in claimed:
+            continue
+        if total >= q["target"]:
+            udata["coins"] += q["reward_coins"]
+            if q["reward_rod"]:
+                udata["rod"] = q["reward_rod"]
+            claimed.add(q["id"])
+            newly_completed.append(q)
+
+    if newly_completed:
+        udata["claimed_quests"] = list(claimed)
+        save_user_fishing(uid, udata)
+
+    return newly_completed
+
+
+# ===================== EMOJI SERVER SYSTEM =====================
+# Owner bot bisa ganti emoji unicode bawaan bot dengan emoji custom server
+# lewat command "!Doom setemoji <key> <emoji>". Kalau belum diset, bot pakai
+# emoji unicode default.
+DEFAULT_EMOJIS = {
+    "coin":      "🪙",
+    "fish":      "🎣",
+    "success":   "✅",
+    "fail":      "❌",
+    "legendary": "⭐",
+    "rare":      "💎",
+    "uncommon":  "🔵",
+    "common":    "⚪",
+    "trash":     "💩",
+    "quest":     "📜",
+    "daily":     "🎁",
+    "vote":      "🗳️",
+    "streak":    "🔥",
 }
 
+def get_emoji_config() -> dict:
+    return load_json("emoji_config.json", {})
+
+def save_emoji_config(d: dict):
+    save_json("emoji_config.json", d)
+
+def emoji(key: str) -> str:
+    """Ambil emoji (custom server kalau sudah diset, kalau belum pakai default unicode)."""
+    cfg = get_emoji_config()
+    return cfg.get(key, DEFAULT_EMOJIS.get(key, ""))
+
+
+# ===================== TEKS BOT (id_gaul, fixed) =====================
 # Semua teks bot yang bisa diterjemahkan
 # Key = kode string, Value = dict per bahasa
 TRANSLATIONS: dict = {
@@ -576,85 +683,17 @@ TRANSLATIONS: dict = {
         "th":      "ขอบคุณที่โหวต **{user}**! 🔥\n\n**💰 เหรียญที่ได้รับ:** +**{reward} เหรียญ**!\n**🪙 เหรียญทั้งหมด:** {total} เหรียญ\n\n**🎣 โบนัสตกปลาจากการโหวตใช้งานอยู่!**\n+**{pct}% เหรียญ** จากการตกปลาเป็นเวลา **{mins} นาที**\n(ใช้งานถึง **{until}**) 🚀\n\n**โหวตทั้งหมดของคุณ:** {count} ครั้ง 🏆\n\nเคลมได้อีกครั้งใน **{cd} ชั่วโมง**!",
         "ja":      "投票してくれてありがとう **{user}**！ 🔥\n\n**💰 獲得コイン:** +**{reward} コイン**！\n**🪙 合計コイン:** {total} コイン\n\n**🎣 投票釣りボーナス有効！**\n+**{pct}% コイン** が釣りで **{mins} 分間** 有効\n(**{until}** まで) 🚀\n\n**総投票数:** {count} 回 🏆\n\n**{cd} 時間後** に再クレーム可能！",
     },
-    # ── SETLANG ──────────────────────────────────────────────
-    "setlang_title": {
-        "id_gaul": "🌐 Pengaturan Bahasa",
-        "id":       "🌐 Pengaturan Bahasa",
-        "en":      "🌐 Language Settings",
-        "de":      "🌐 Spracheinstellungen",
-        "ar":      "🌐 إعدادات اللغة",
-        "th":      "🌐 การตั้งค่าภาษา",
-        "ja":      "🌐 言語設定",
-    },
-    "setlang_changed": {
-        "id_gaul": "✅ Bahasa berhasil diubah ke **{lang}**!",
-        "id":       "✅ Bahasa berhasil diubah ke **{lang}**!",
-        "en":      "✅ Language successfully changed to **{lang}**!",
-        "de":      "✅ Sprache erfolgreich auf **{lang}** geändert!",
-        "ar":      "✅ تم تغيير اللغة بنجاح إلى **{lang}**!",
-        "th":      "✅ เปลี่ยนภาษาเป็น **{lang}** สำเร็จ!",
-        "ja":      "✅ 言語を **{lang}** に変更しました！",
-    },
-    "setlang_invalid": {
-        "id_gaul": "❌ Bahasa tidak valid! Pilih: {options}",
-        "id":       "❌ Bahasa tidak valid! Pilih: {options}",
-        "en":      "❌ Invalid language! Choose: {options}",
-        "de":      "❌ Ungültige Sprache! Wähle: {options}",
-        "ar":      "❌ لغة غير صالحة! اختر: {options}",
-        "th":      "❌ ภาษาไม่ถูกต้อง! เลือก: {options}",
-        "ja":      "❌ 無効な言語！選択: {options}",
-    },
-    "setlang_current": {
-        "id_gaul": "**Bahasa lo saat ini:** {lang}\n\n**Pilihan bahasa tersedia:**\n{options}\n\nGunakan: `!Doom setlang [kode]`\nContoh: `!Doom setlang id`",
-        "id":       "**Bahasa lo saat ini:** {lang}\n\n**Pilihan bahasa tersedia:**\n{options}\n\nGunakan: `!Doom setlang [kode]`\nContoh: `!Doom setlang id`",
-        "en":      "**Your current language:** {lang}\n\n**Available languages:**\n{options}\n\nUse: `!Doom setlang [code]`\nExample: `!Doom setlang ja`",
-        "de":      "**Deine aktuelle Sprache:** {lang}\n\n**Verfügbare Sprachen:**\n{options}\n\nVerwende: `!Doom setlang [code]`\nBeispiel: `!Doom setlang de`",
-        "ar":      "**لغتك الحالية:** {lang}\n\n**اللغات المتاحة:**\n{options}\n\nاستخدم: `!Doom setlang [code]`\nمثال: `!Doom setlang ar`",
-        "th":      "**ภาษาปัจจุบันของคุณ:** {lang}\n\n**ภาษาที่ใช้ได้:**\n{options}\n\nใช้: `!Doom setlang [code]`\nตัวอย่าง: `!Doom setlang th`",
-        "ja":      "**現在の言語:** {lang}\n\n**利用可能な言語:**\n{options}\n\n使用法: `!Doom setlang [コード]`\n例: `!Doom setlang ja`",
-    },
 }
 
-# ─── Language data helpers ───────────────────────────────────────────────────
+# ─── Language helper (fixed bahasa, fitur setlang sudah dihapus) ─────────────
+# Bot sekarang selalu pake Bahasa Indonesia gaul untuk semua user, gak ada lagi
+# per-user language switching. Parameter user_id tetap diterima biar semua
+# pemanggilan t() di seluruh kode lama gak perlu diubah satu-satu.
 
-def get_lang_data() -> dict:
-    return load_json("lang.json", {})
-
-def save_lang_data(d: dict):
-    save_json("lang.json", d)
-
-def get_user_lang(user_id) -> str:
-    """
-    Return kode bahasa user.
-    Owner bot → selalu id_gaul (tidak bisa diubah).
-    User lain → dari lang.json, default 'en'.
-    Jika user non-owner tersimpan sebagai 'id_gaul' (data lama), otomatis di-reset ke 'en'.
-    """
-    uid = str(user_id)
-    if OWNER_ID and int(uid) == OWNER_ID:
-        return "id_gaul"
-    data = get_lang_data()
-    lang = data.get(uid, "en")
-    # Kalau user non-owner punya data lama "id_gaul", reset ke "en" dan simpan
-    if lang == "id_gaul":
-        data[uid] = "en"
-        save_lang_data(data)
-        return "en"
-    return lang
-
-def set_user_lang(user_id, lang_code: str):
-    data = get_lang_data()
-    data[str(user_id)] = lang_code
-    save_lang_data(data)
-
-def t(key: str, user_id, **kwargs) -> str:
-    """
-    Ambil teks terjemahan berdasarkan key dan user_id.
-    Fallback: en → id_gaul → key itu sendiri.
-    """
-    lang = get_user_lang(user_id)
+def t(key: str, user_id=None, **kwargs) -> str:
+    """Ambil teks berdasarkan key. Bahasa selalu id_gaul (fixed)."""
     entry = TRANSLATIONS.get(key, {})
-    text  = entry.get(lang) or entry.get("en") or entry.get("id_gaul") or key
+    text  = entry.get("id_gaul") or entry.get("id") or entry.get("en") or key
     if kwargs:
         try:
             text = text.format(**kwargs)
@@ -808,12 +847,11 @@ async def _resync_slash_descriptions():
         "tebak":        "Buka Arena Tebak-Tebakan!",
         "coins":        "Cek koin lo",
         "giveaway":     "Mulai giveaway!",
-        "ticket":       "Setup panel ticket",
-        "leveling":     "Setup fitur leveling",
         "reactionrole": "Setup reaction role dengan button",
-        "leaderboard":  "Lihat leaderboard level",
-        "setlang":      "Change bot language / Ganti bahasa bot",
+        "leaderboard":  "Lihat leaderboard koin terbanyak",
         "tambahsoal":   "Tambah soal untuk Arena Tebak yang sedang aktif (host/admin only)",
+        "daily":        "Klaim koin harian",
+        "quest":        "Lihat progress quest mancing lo",
     }
     locked = get_locked_commands()
     for cmd in tree.get_commands():
@@ -985,6 +1023,18 @@ async def on_message(message):
     guild_id    = str(message.guild.id) if message.guild else None
     content_lower = message.content.lower()
 
+    # ===== NO-PREFIX SYSTEM =====
+    # User yang di-grant akses "no prefix" oleh owner (atau owner sendiri) bisa
+    # ketik nama command langsung tanpa "!Doom " di depannya.
+    if message.guild and message.content and not message.content.startswith("!"):
+        if is_noprefix_user(message.author.id):
+            first_word = message.content.strip().split(" ")[0].lower()
+            if first_word in get_all_command_names():
+                fake_message = copy.copy(message)
+                fake_message.content = f"!Doom {message.content.strip()}"
+                await bot.process_commands(fake_message)
+                return
+
     # Auto response
     if guild_id:
         ar = get_autoresponse()
@@ -1032,24 +1082,14 @@ async def on_message(message):
                 udata["coins"] += reward
                 save_user_fishing(str(message.author.id), udata)
                 uid_w = message.author.id
-                # id_gaul pake praise gaul, bahasa lain tidak
-                if get_user_lang(uid_w) == "id_gaul":
-                    praise = random.choice(JAWABAN_BENAR_GAUL)
-                    desc   = t("tebak_correct_desc", uid_w,
-                                praise=praise, user=message.author.display_name,
-                                reward=reward, answer=tb["jawaban"].title(), total=udata["coins"])
-                else:
-                    desc   = t("tebak_correct_desc", uid_w,
-                                praise="", user=message.author.display_name,
-                                reward=reward, answer=tb["jawaban"].title(), total=udata["coins"])
+                praise = random.choice(JAWABAN_BENAR_GAUL)
+                desc   = t("tebak_correct_desc", uid_w,
+                            praise=praise, user=message.author.display_name,
+                            reward=reward, answer=tb["jawaban"].title(), total=udata["coins"])
                 em = dark_red_embed(t("tebak_correct_title", uid_w), desc)
                 em.set_thumbnail(url=message.author.display_avatar.url)
                 await message.channel.send(embed=em)
                 del active_tebakan[guild_id]
-
-    # Leveling
-    if guild_id and message.content and not message.content.startswith("!"):
-        await handle_leveling(message)
 
     # Sticky message
     if guild_id:
@@ -1077,43 +1117,6 @@ async def on_message(message):
             save_sticky(sticky_data)
 
     await bot.process_commands(message)
-
-async def handle_leveling(message):
-    config = get_config()
-    gid    = str(message.guild.id)
-    if gid not in config or not config[gid].get("leveling_enabled", True):
-        return
-    levels = get_levels()
-    uid    = str(message.author.id)
-    if gid not in levels:
-        levels[gid] = {}
-    if uid not in levels[gid]:
-        levels[gid][uid] = {"xp": 0, "level": 0}
-    xp_gain = random.randint(10, 25)
-    levels[gid][uid]["xp"] += xp_gain
-    needed  = (levels[gid][uid]["level"] + 1) * 100
-    if levels[gid][uid]["xp"] >= needed:
-        levels[gid][uid]["level"] += 1
-        levels[gid][uid]["xp"]    = 0
-        new_level  = levels[gid][uid]["level"]
-        channel_id = config[gid].get("level_channel")
-        ch         = message.guild.get_channel(int(channel_id)) if channel_id else message.channel
-        em = dark_red_embed(
-            "🆙 LEVEL UP GAES!",
-            f"Selamat **{message.author.mention}** naik ke level **{new_level}**! 🎉\nTerus aktif ya bro!"
-        )
-        em.set_thumbnail(url=message.author.display_avatar.url)
-        await ch.send(embed=em)
-        level_roles = config[gid].get("level_roles", {})
-        if str(new_level) in level_roles:
-            role = message.guild.get_role(int(level_roles[str(new_level)]))
-            if role:
-                try:
-                    await message.author.add_roles(role)
-                    await ch.send(f"🏆 {message.author.mention} dapet role **{role.name}** karena udah level {new_level}!")
-                except:
-                    pass
-    save_levels(levels)
 
 # ===================== TASKS =====================
 @tasks.loop(seconds=30)
@@ -1159,84 +1162,6 @@ async def check_sticky():
     pass
 
 # ===================== VIEWS =====================
-
-class TicketView(discord.ui.View):
-    def __init__(self, panel_config):
-        super().__init__(timeout=None)
-        self.panel_config = panel_config
-        btn = discord.ui.Button(
-            label=panel_config.get("button_label", "Buka Ticket"),
-            emoji=panel_config.get("button_emoji", "🎫"),
-            style=discord.ButtonStyle.danger,
-            custom_id=f"ticket_open_{panel_config['panel_id']}"
-        )
-        btn.callback = self.open_ticket
-        self.add_item(btn)
-
-    async def open_ticket(self, interaction: discord.Interaction):
-        guild  = interaction.guild
-        config = self.panel_config
-        existing = discord.utils.get(guild.channels, name=f"ticket-{interaction.user.name.lower()}")
-        if existing:
-            await interaction.response.send_message(f"Lo udah punya ticket aktif: {existing.mention} bro!", ephemeral=True)
-            return
-
-        overwrites = {
-            guild.default_role: discord.PermissionOverwrite(read_messages=False),
-            interaction.user:   discord.PermissionOverwrite(read_messages=True, send_messages=True),
-            guild.me:           discord.PermissionOverwrite(read_messages=True, send_messages=True, manage_channels=True)
-        }
-        # Whitelist role — otomatis bisa baca & kirim pesan di channel ticket
-        for role_id in config.get("whitelist_roles", []):
-            role = guild.get_role(int(role_id))
-            if role:
-                overwrites[role] = discord.PermissionOverwrite(read_messages=True, send_messages=True)
-
-        cat = guild.get_channel(int(config["category_id"])) if config.get("category_id") else None
-        ch  = await guild.create_text_channel(
-            f"ticket-{interaction.user.name}",
-            overwrites=overwrites, category=cat,
-            topic=f"Ticket milik {interaction.user}"
-        )
-
-        em = dark_red_embed(
-            f"🎫 Ticket - {interaction.user.display_name}",
-            config.get("description", "Hai! Cerita masalah lo di sini, tim kami bakal bantu ASAP!")
-        )
-        # Thumbnail & image dari attachment yang di-upload saat setup
-        if config.get("thumbnail_url"):
-            em.set_thumbnail(url=config["thumbnail_url"])
-        if config.get("image_url"):
-            em.set_image(url=config["image_url"])
-        # Tampilkan role staff di embed
-        role_mentions = [guild.get_role(int(rid)).mention for rid in config.get("whitelist_roles", []) if guild.get_role(int(rid))]
-        if role_mentions:
-            em.add_field(name="👥 Staff yang bisa bantu", value=" ".join(role_mentions), inline=False)
-
-        close_view = TicketCloseView(config)
-        await ch.send(content=interaction.user.mention, embed=em, view=close_view)
-        await interaction.response.send_message(f"Ticket lo udah kebuka bro! {ch.mention}", ephemeral=True)
-
-class TicketCloseView(discord.ui.View):
-    def __init__(self, panel_config=None):
-        super().__init__(timeout=None)
-        self.panel_config = panel_config or {}
-
-    @discord.ui.button(label="Tutup Ticket", emoji="🔒", style=discord.ButtonStyle.danger, custom_id="ticket_close")
-    async def close_ticket(self, interaction: discord.Interaction, button: discord.ui.Button):
-        # Hanya pembuka ticket, whitelist role, atau admin yang bisa tutup
-        whitelist_ids   = self.panel_config.get("whitelist_roles", [])
-        user_role_ids   = [str(r.id) for r in interaction.user.roles]
-        is_ticket_owner = interaction.channel.name == f"ticket-{interaction.user.name.lower()}"
-        is_whitelisted  = any(rid in user_role_ids for rid in whitelist_ids)
-        is_admin        = interaction.user.guild_permissions.administrator
-        if not (is_ticket_owner or is_whitelisted or is_admin):
-            await interaction.response.send_message("❌ Lo tidak punya izin untuk menutup ticket ini!", ephemeral=True)
-            return
-        em = dark_red_embed("🔒 Ticket Ditutup", f"Ticket ditutup oleh {interaction.user.mention}.\nChannel akan dihapus dalam 5 detik.")
-        await interaction.response.send_message(embed=em)
-        await asyncio.sleep(5)
-        await interaction.channel.delete()
 
 # ===================== ARENA TEBAK-TEBAKAN =====================
 
@@ -1453,57 +1378,6 @@ class ReactionRoleView(discord.ui.View):
             await interaction.user.add_roles(role)
             await interaction.response.send_message(f"✅ Role **{role.name}** berhasil dapet!", ephemeral=True)
 
-class LevelingSetupView(discord.ui.View):
-    def __init__(self, guild_id):
-        super().__init__(timeout=300)
-        self.guild_id = str(guild_id)
-
-    @discord.ui.button(label="Toggle Leveling ON/OFF", style=discord.ButtonStyle.danger, row=0)
-    async def toggle_leveling(self, interaction: discord.Interaction, button: discord.ui.Button):
-        config = get_config()
-        gid    = self.guild_id
-        if gid not in config:
-            config[gid] = {}
-        config[gid]["leveling_enabled"] = not config[gid].get("leveling_enabled", True)
-        save_config(config)
-        status = "✅ AKTIF" if config[gid]["leveling_enabled"] else "❌ NONAKTIF"
-        await interaction.response.send_message(f"Leveling sekarang: **{status}**", ephemeral=True)
-
-    @discord.ui.button(label="Set Channel Level", style=discord.ButtonStyle.secondary, row=0)
-    async def set_channel(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.send_message("Mention channel buat notif level up:", ephemeral=True)
-        try:
-            msg = await bot.wait_for("message", check=lambda m: m.author.id == interaction.user.id and m.channel_mentions, timeout=30)
-            ch  = msg.channel_mentions[0]
-            config = get_config()
-            gid    = self.guild_id
-            if gid not in config:
-                config[gid] = {}
-            config[gid]["level_channel"] = str(ch.id)
-            save_config(config)
-            await msg.reply(f"✅ Channel level up diset ke {ch.mention}!")
-        except asyncio.TimeoutError:
-            await interaction.followup.send("⏰ Timeout!", ephemeral=True)
-
-    @discord.ui.button(label="Set Role per Level", style=discord.ButtonStyle.secondary, row=0)
-    async def set_role_level(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.send_message("Ketik: `level:role_id` contoh `5:123456789`", ephemeral=True)
-        try:
-            msg   = await bot.wait_for("message", check=lambda m: m.author.id == interaction.user.id and ":" in m.content, timeout=30)
-            parts = msg.content.split(":")
-            lvl, rid = parts[0].strip(), parts[1].strip()
-            config = get_config()
-            gid    = self.guild_id
-            if gid not in config:
-                config[gid] = {}
-            if "level_roles" not in config[gid]:
-                config[gid]["level_roles"] = {}
-            config[gid]["level_roles"][lvl] = rid
-            save_config(config)
-            await msg.reply(f"✅ Level {lvl} akan dapet role ID {rid}!")
-        except asyncio.TimeoutError:
-            await interaction.followup.send("⏰ Timeout!", ephemeral=True)
-
 # ===================== FISHING VIEWS =====================
 
 class FishingMainView(discord.ui.View):
@@ -1591,6 +1465,24 @@ class FishingMainView(discord.ui.View):
                 color=embed_color
             )
         await interaction.response.edit_message(embed=em, view=self)
+
+        # Cek & kasih reward quest mancing kalau ada milestone baru tercapai
+        completed_quests = check_and_award_quests(uid)
+        for q in completed_quests:
+            qem = discord.Embed(
+                title=f"{emoji('quest')} Quest Selesai: {q['label']}!",
+                description=(
+                    f"Lo berhasil nangkep **{q['target']} ikan** total! 🎉\n\n"
+                    f"**Reward:** +{q['reward_coins']} {emoji('coin')}"
+                    + (f" & gratis **{q['reward_rod']}** 🎣" if q["reward_rod"] else "")
+                ),
+                color=0x00FF88
+            )
+            qem.set_footer(text="Ketik !Doom quest buat liat semua progress quest lo")
+            try:
+                await interaction.followup.send(embed=qem)
+            except Exception:
+                pass
 
     @discord.ui.button(label="🎒 Inventori", style=discord.ButtonStyle.secondary, row=0)
     async def inventory(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -2109,8 +2001,7 @@ class PremiumSetupView(discord.ui.View):
         available = [
             "fish", "tebak", "coins", "giveaway", "event",
             "warn", "sticky", "autoresponse",
-            "ticket", "leveling", "reactionrole", "leaderboard",
-            "setlang"
+            "reactionrole", "leaderboard", "daily", "quest"
         ]
         avail_text = ", ".join([f"`{c}`" for c in available])
 
@@ -2120,7 +2011,7 @@ class PremiumSetupView(discord.ui.View):
             f"**Command yang Tersedia untuk Dikunci:**\n{avail_text}\n\n"
             f"**Cara pakai:**\n"
             f"Ketik nama command yang mau dikunci, pisah dengan koma.\n"
-            f"Contoh: `fish, tebak, giveaway, ticket`\n\n"
+            f"Contoh: `fish, tebak, giveaway, daily`\n\n"
             f"Ketik `none` untuk hapus semua lock.\n"
             f"*(120 detik)*",
             ephemeral=True
@@ -2473,11 +2364,18 @@ async def on_guild_join(guild: discord.Guild):
         inline=False
     )
     em.add_field(
-        name="🎫 Tickets & Roles",
+        name="🎭 Roles",
         value=(
-            "`/ticket` — Setup support ticket panel\n"
             "`/reactionrole` — Button role picker\n"
-            "`/leveling` — Setup leveling & XP system"
+            "`!Doom addrole` / `removerole` — Manage roles"
+        ),
+        inline=False
+    )
+    em.add_field(
+        name="🪙 Coins & Quest",
+        value=(
+            "`!Doom daily` / `/daily` — Klaim koin harian\n"
+            "`!Doom quest` / `/quest` — Cek progress quest mancing"
         ),
         inline=False
     )
@@ -2486,8 +2384,7 @@ async def on_guild_join(guild: discord.Guild):
         value=(
             "`!Doom autoresponse` — Auto-reply on trigger words\n"
             "`!Doom embed` — Send custom embed messages\n"
-            "`!Doom vote` — Vote the bot & get coin rewards\n"
-            "`!Doom setlang` / `/setlang` — Change bot language (id/en/de/ar/th/ja)"
+            "`!Doom vote` — Vote the bot & get coin rewards"
         ),
         inline=False
     )
@@ -2530,7 +2427,7 @@ async def maintenance_panel(ctx):
 
 # ===================== PREFIX COMMANDS =====================
 
-@bot.command(name="ping")
+@bot.command(name="ping", aliases=["p", "latency"])
 async def ping_cmd(ctx):
     if await check_maintenance(ctx):
         return
@@ -2549,7 +2446,7 @@ async def fishing_cmd(ctx):
     em = dark_red_embed("🎣 DOOMINIKS PARADISE Fishing", f"Hey **{ctx.author.display_name}**! Choose your action:")
     await ctx.reply(embed=em, view=FishingMainView(ctx.author.id))
 
-@bot.command(name="tebak")
+@bot.command(name="tebak", aliases=["riddle", "tebakan"])
 async def tebak_cmd(ctx):
     if await check_maintenance(ctx): return
     if await check_premium_gate(ctx, "tebak"): return
@@ -2567,7 +2464,7 @@ async def tebak_cmd(ctx):
     )
     await ctx.send(embed=em)
 
-@bot.command(name="addtebak")
+@bot.command(name="addtebak", aliases=["addriddle", "tambahtebak"])
 @commands.has_permissions(administrator=True)
 async def addtebak_cmd(ctx, *, content: str = None):
     if not content:
@@ -2586,7 +2483,7 @@ async def addtebak_cmd(ctx, *, content: str = None):
     em = dark_red_embed("✅ Soal Tebakan Ditambah!", f"**Soal:** {soal}\n**Jawaban:** {jawaban}\n**Reward:** {reward} koin\n\nTotal soal custom: **{len(custom)}**")
     await ctx.reply(embed=em)
 
-@bot.command(name="listtebak")
+@bot.command(name="listtebak", aliases=["listriddle", "tebaklist"])
 async def listtebak_cmd(ctx):
     custom = get_custom_tebakan()
     if not custom:
@@ -2597,7 +2494,7 @@ async def listtebak_cmd(ctx):
     em.set_footer(text=f"Total: {len(custom)} custom | Default: {len(TEBAKAN_LIST)}")
     await ctx.reply(embed=em)
 
-@bot.command(name="removetebak")
+@bot.command(name="removetebak", aliases=["deltebak", "hapustebak"])
 @commands.has_permissions(administrator=True)
 async def removetebak_cmd(ctx, nomor: int = None):
     if not nomor:
@@ -2618,13 +2515,13 @@ async def check_coins(ctx):
     uid   = ctx.author.id
     udata = get_user_fishing(str(uid))
     em = dark_red_embed(
-        t("coins_title", uid),
-        t("coins_desc", uid, user=ctx.author.display_name, amount=udata["coins"])
+        f"{emoji('coin')} Koin Lo",
+        f"**{ctx.author.display_name}** punya **{udata['coins']} koin** {emoji('coin')}"
     )
     await ctx.reply(embed=em)
 
 # --- Warn ---
-@bot.command(name="warn")
+@bot.command(name="warn", aliases=["peringatan"])
 @commands.has_permissions(manage_messages=True)
 async def warn(ctx, member: discord.Member = None, *, reason: str = "Gak ada alasan"):
     if await check_premium_gate(ctx, "warn"): return
@@ -2647,7 +2544,7 @@ async def warn(ctx, member: discord.Member = None, *, reason: str = "Gak ada ala
         dm_status = "\n⚠️ Gagal kirim DM."
     await ctx.send(embed=dark_red_embed("⚠️ Member Di-Warn!", f"**{member.display_name}** dapet warn!\n**Alasan:** {reason}\n**Total:** {count}{dm_status}"))
 
-@bot.command(name="warns")
+@bot.command(name="warns", aliases=["warnlist", "cekwarn"])
 async def check_warns(ctx, member: discord.Member = None):
     member    = member or ctx.author
     warns     = get_warns()
@@ -2659,7 +2556,7 @@ async def check_warns(ctx, member: discord.Member = None):
     await ctx.reply(embed=dark_red_embed(f"⚠️ Warn {member.display_name}", f"Total: **{len(user_warns)} warn**\n\n{warn_text}"))
 
 # --- Moderation ---
-@bot.command(name="kick")
+@bot.command(name="kick", aliases=["tendang"])
 @commands.has_permissions(kick_members=True)
 async def kick(ctx, member: discord.Member = None, *, reason="Gak ada alasan"):
     if not member:
@@ -2668,7 +2565,7 @@ async def kick(ctx, member: discord.Member = None, *, reason="Gak ada alasan"):
     await member.kick(reason=reason)
     await ctx.send(embed=dark_red_embed("👢 Di-Kick!", f"**{member.display_name}** di-kick!\n**Alasan:** {reason}"))
 
-@bot.command(name="ban")
+@bot.command(name="ban", aliases=["banned"])
 @commands.has_permissions(ban_members=True)
 async def ban(ctx, member: discord.Member = None, *, reason="Gak ada alasan"):
     if not member:
@@ -2687,7 +2584,7 @@ async def timeout_cmd(ctx, member: discord.Member = None, minutes: int = 10, *, 
     await member.timeout(until, reason=reason)
     await ctx.send(embed=dark_red_embed("⏱️ Timeout!", f"**{member.display_name}** di-timeout {minutes} menit!\n**Alasan:** {reason}"))
 
-@bot.command(name="move")
+@bot.command(name="move", aliases=["pindah", "vcmove"])
 @commands.has_permissions(move_members=True)
 async def move(ctx, member: discord.Member = None, *, channel: discord.VoiceChannel = None):
     if not member or not channel:
@@ -2696,7 +2593,7 @@ async def move(ctx, member: discord.Member = None, *, channel: discord.VoiceChan
     await member.move_to(channel)
     await ctx.send(embed=dark_red_embed("🔀 Di-Move!", f"**{member.display_name}** dipindah ke **{channel.name}**!"))
 
-@bot.command(name="addrole")
+@bot.command(name="addrole", aliases=["arole", "giverole"])
 @commands.has_permissions(manage_roles=True)
 async def addrole(ctx, member: discord.Member = None, role: discord.Role = None):
     if not member or not role:
@@ -2705,7 +2602,7 @@ async def addrole(ctx, member: discord.Member = None, role: discord.Role = None)
     await member.add_roles(role)
     await ctx.send(embed=dark_red_embed("✅ Role Ditambah!", f"**{role.name}** dikasih ke **{member.display_name}**!"))
 
-@bot.command(name="removerole")
+@bot.command(name="removerole", aliases=["rrole", "delrole"])
 @commands.has_permissions(manage_roles=True)
 async def removerole(ctx, member: discord.Member = None, role: discord.Role = None):
     if not member or not role:
@@ -2741,7 +2638,7 @@ async def clear(ctx, amount: int = 5):
     await asyncio.sleep(3)
     await msg.delete()
 
-@bot.command(name="embed")
+@bot.command(name="embed", aliases=["em"])
 @commands.has_permissions(manage_messages=True)
 async def embed_cmd(ctx, *, content: str = None):
     if not content:
@@ -2772,7 +2669,7 @@ async def embed_cmd(ctx, *, content: str = None):
     except:
         pass
 
-@bot.command(name="setmainchannel")
+@bot.command(name="setmainchannel", aliases=["mainchannel", "setmc"])
 @commands.has_permissions(administrator=True)
 async def set_main_channel(ctx, channel: discord.TextChannel = None):
     if not channel:
@@ -2805,7 +2702,7 @@ async def autoresponse_cmd(ctx, action: str = None, trigger: str = None, *, resp
     else:
         await ctx.reply("❓ Format:\n`!Doom ar add [trigger] [response]`\n`!Doom ar remove [trigger]`\n`!Doom ar list`")
 
-@bot.command(name="sticky")
+@bot.command(name="sticky", aliases=["stickymsg"])
 @commands.has_permissions(manage_messages=True)
 async def sticky_cmd(ctx, action: str = None, *, content: str = None):
     if await check_premium_gate(ctx, "sticky"): return
@@ -2851,7 +2748,7 @@ async def giveaway_cmd(ctx, duration: str = None, *, prize: str = None):
     gw_data.setdefault(gid, {})[str(msg.id)] = {"prize": prize, "end_time": end_time, "channel_id": str(ctx.channel.id), "ended": False}
     save_giveaways(gw_data)
 
-@bot.command(name="event")
+@bot.command(name="event", aliases=["announce", "pengumuman"])
 @commands.has_permissions(administrator=True)
 async def event_cmd(ctx, *, content: str = None):
     if await check_premium_gate(ctx, "event"): return
@@ -2980,7 +2877,7 @@ async def event_cmd(ctx, *, content: str = None):
         if target_channel == ctx.channel:
             await ctx.reply(f"✅ Event **{name}** dikirim! ⚠️ Format jam tidak valid, auto-announce dinonaktifkan.")
 
-@bot.command(name="addemoji", aliases=["emoji"])
+@bot.command(name="addemoji", aliases=["ae", "addemote"])
 @commands.has_permissions(manage_emojis=True)
 async def addemoji_cmd(ctx):
     """
@@ -3021,7 +2918,7 @@ async def addemoji_cmd(ctx):
 
 # ===================== PREMIUM COMMAND (User) =====================
 
-@bot.command(name="premium")
+@bot.command(name="premium", aliases=["prem", "vip"])
 async def premium_user_cmd(ctx):
     if await check_maintenance(ctx):
         return
@@ -3321,82 +3218,222 @@ async def premium_user_cmd(ctx):
 
     await ctx.reply(embed=em, view=OrderPremiumView())
 
-# ===================== HELP COMMAND =====================
+# ===================== DAILY LOGIN COMMAND =====================
 
-
-# ===================== SETLANG COMMAND =====================
-
-@bot.command(name="setlang", aliases=["language", "lang"])
-async def setlang_cmd(ctx, lang_code: str = None):
-    """Ganti bahasa bot untuk user ini."""
+@bot.command(name="daily", aliases=["login", "harian", "claim"])
+async def daily_cmd(ctx):
+    """Klaim koin harian, streak makin panjang makin gede bonusnya."""
     if await check_maintenance(ctx):
         return
-    uid = str(ctx.author.id)
+    if await check_premium_gate(ctx, "daily"):
+        return
+    uid    = str(ctx.author.id)
+    record = get_user_daily(uid)
+    now    = time.time()
+    elapsed = now - record.get("last_claim", 0)
+    cooldown_s = DAILY_COOLDOWN_H * 3600
 
-    # Owner tidak bisa ganti bahasa (selalu id_gaul)
-    if ctx.author.id == OWNER_ID:
+    if elapsed < cooldown_s:
+        sisa_s = int(cooldown_s - elapsed)
+        sisa_h, sisa_m = sisa_s // 3600, (sisa_s % 3600) // 60
         em = discord.Embed(
-            title="👑 Language / Bahasa",
-            description="Sebagai **Owner Bot**, bahasa lo dikunci ke **🇮🇩 Indonesia Gaul** permanen dan tidak bisa diubah.",
+            title="⏰ Udah Klaim Daily Hari Ini!",
+            description=f"Sabar bro, klaim lagi dalam **{sisa_h} jam {sisa_m} menit**.",
             color=DARK_RED
         )
         await ctx.reply(embed=em)
         return
 
-    options_text = "\n".join([f"• `{code}` — {name}" for code, name in SUPPORTED_LANGS.items() if code != "id_gaul"])
+    # Streak: kalau claim masih dalam grace period, streak lanjut. Kalau kelewatan, reset.
+    if elapsed <= DAILY_STREAK_GRACE_H * 3600:
+        streak = record.get("streak", 0) + 1
+    else:
+        streak = 1
 
-    if not lang_code:
-        current_lang = get_user_lang(uid)
-        current_name = SUPPORTED_LANGS.get(current_lang, current_lang)
-        em = discord.Embed(
-            title=t("setlang_title", uid),
-            description=t("setlang_current", uid,
-                lang=current_name,
-                options=options_text
-            ),
-            color=DARK_RED
-        )
-        await ctx.reply(embed=em)
-        return
+    streak_bonus = min(streak * DAILY_STREAK_BONUS_PER_DAY, DAILY_STREAK_BONUS_CAP)
+    base_reward  = random.randint(DAILY_COIN_MIN, DAILY_COIN_MAX)
+    total_reward = base_reward + streak_bonus
 
-    code = lang_code.lower().strip()
-    # id_gaul khusus owner bot, user biasa tidak bisa pilih ini (pilih "id" untuk Indonesia Gaul)
-    valid_codes = [lc for lc in SUPPORTED_LANGS if lc != "id_gaul"]
-    if code not in valid_codes:
-        opts = ", ".join([f"`{lc}`" for lc in valid_codes])
-        em = discord.Embed(
-            title="❌ Invalid Language",
-            description=t("setlang_invalid", uid, options=opts),
-            color=0xFF4444
-        )
-        await ctx.reply(embed=em)
-        return
+    udata = get_user_fishing(uid)
+    udata["coins"] += total_reward
+    save_user_fishing(uid, udata)
 
-    set_user_lang(uid, code)
-    lang_name = SUPPORTED_LANGS[code]
+    set_user_daily(uid, {"last_claim": now, "streak": streak})
+
     em = discord.Embed(
-        title=t("setlang_title", uid),
-        description=t("setlang_changed", uid, lang=lang_name),
+        title=f"{emoji('daily')} Daily Login Diklaim!",
+        description=(
+            f"Makasih udah mampir **{ctx.author.display_name}**! 🔥\n\n"
+            f"**{emoji('coin')} Koin Didapat:** +{base_reward} (base) + {streak_bonus} (streak bonus) = **{total_reward} koin**\n"
+            f"**{emoji('streak')} Streak Lo:** {streak} hari berturut-turut\n"
+            f"**{emoji('coin')} Total Koin:** {udata['coins']}\n\n"
+            f"Balik lagi besok biar streak-nya jalan terus!"
+        ),
         color=0x00FF88
     )
+    em.set_thumbnail(url=ctx.author.display_avatar.url)
+    em.set_footer(text="DOOMINIKS PARADISE | Daily Login")
     await ctx.reply(embed=em)
+
+
+# ===================== QUEST MANCING COMMAND =====================
+
+@bot.command(name="quest", aliases=["quests", "misi"])
+async def quest_cmd(ctx):
+    """Lihat progress quest mancing lo."""
+    if await check_maintenance(ctx):
+        return
+    if await check_premium_gate(ctx, "quest"):
+        return
+    uid     = str(ctx.author.id)
+    udata   = get_user_fishing(uid)
+    claimed = set(udata.get("claimed_quests", []))
+    total   = udata.get("total_catch", 0)
+
+    lines = []
+    for q in FISHING_QUESTS:
+        done = q["id"] in claimed
+        mark = "✅" if done else f"{min(total, q['target'])}/{q['target']}"
+        reward_txt = f"+{q['reward_coins']} {emoji('coin')}"
+        if q["reward_rod"]:
+            reward_txt += f" + {q['reward_rod']}"
+        lines.append(f"{'✅' if done else '⬜'} **{q['label']}** — {mark}  *({reward_txt})*")
+
+    em = discord.Embed(
+        title=f"{emoji('quest')} Quest Mancing Lo",
+        description=(
+            f"**Total Tangkapan:** {total} ikan\n\n" + "\n".join(lines) +
+            "\n\nQuest otomatis kelar & reward otomatis masuk begitu lo capai targetnya, tinggal mancing terus!"
+        ),
+        color=DARK_RED
+    )
+    em.set_thumbnail(url=ctx.author.display_avatar.url)
+    await ctx.reply(embed=em)
+
+
+# ===================== NO-PREFIX COMMAND (Owner Only) =====================
+
+@bot.command(name="noprefix", aliases=["np"])
+async def noprefix_cmd(ctx, action: str = None, member: discord.Member = None):
+    """Owner bot kasih/cabut akses no-prefix ke user lain."""
+    if ctx.author.id != OWNER_ID:
+        await ctx.reply(embed=dark_red_embed("❌ No Permission!", "Cuma Owner Bot yang bisa atur no-prefix access!"))
+        return
+
+    users = get_noprefix_users()
+
+    if action is None or action.lower() == "list":
+        if not users:
+            desc = "Belum ada user yang dikasih akses no-prefix."
+        else:
+            desc = "\n".join([f"• <@{u}>" for u in users])
+        await ctx.reply(embed=dark_red_embed("📋 Daftar User No-Prefix", desc))
+        return
+
+    action = action.lower()
+    if action not in ("add", "remove") or member is None:
+        await ctx.reply(embed=dark_red_embed(
+            "⚙️ Cara Pakai",
+            "`!Doom noprefix add @user` — Kasih akses no-prefix\n"
+            "`!Doom noprefix remove @user` — Cabut akses no-prefix\n"
+            "`!Doom noprefix list` — Lihat semua user dengan akses no-prefix"
+        ))
+        return
+
+    uid = str(member.id)
+    if action == "add":
+        if uid in users:
+            await ctx.reply(embed=dark_red_embed(f"{emoji('fail')} Udah Punya Akses", f"{member.mention} udah punya akses no-prefix bro!"))
+            return
+        users.append(uid)
+        save_noprefix_users(users)
+        await ctx.reply(embed=dark_red_embed(f"{emoji('success')} No-Prefix Diaktifkan", f"{member.mention} sekarang bisa pakai command tanpa prefix `!Doom`!"))
+    else:
+        if uid not in users:
+            await ctx.reply(embed=dark_red_embed(f"{emoji('fail')} Gak Ketemu", f"{member.mention} emang belum punya akses no-prefix."))
+            return
+        users.remove(uid)
+        save_noprefix_users(users)
+        await ctx.reply(embed=dark_red_embed(f"{emoji('success')} No-Prefix Dicabut", f"Akses no-prefix {member.mention} udah dicabut."))
+
+
+# ===================== EMOJI SERVER COMMAND (Owner Only) =====================
+
+@bot.command(name="setemoji", aliases=["emojiset", "seteemoji"])
+async def setemoji_cmd(ctx, key: str = None, custom_emoji: str = None):
+    """Owner bot bisa ganti emoji unicode default bot dengan emoji custom server."""
+    if ctx.author.id != OWNER_ID:
+        await ctx.reply(embed=dark_red_embed("❌ No Permission!", "Cuma Owner Bot yang bisa atur emoji bot!"))
+        return
+
+    cfg = get_emoji_config()
+
+    if key is None or key.lower() == "list":
+        lines = [f"`{k}` → {cfg.get(k, DEFAULT_EMOJIS[k])} {'*(custom)*' if k in cfg else '*(default)*'}" for k in DEFAULT_EMOJIS]
+        await ctx.reply(embed=dark_red_embed("🖼️ Emoji Bot Saat Ini", "\n".join(lines)))
+        return
+
+    key = key.lower()
+    if key not in DEFAULT_EMOJIS:
+        opts = ", ".join([f"`{k}`" for k in DEFAULT_EMOJIS])
+        await ctx.reply(embed=dark_red_embed("❌ Key Tidak Valid", f"Key yang tersedia: {opts}"))
+        return
+
+    if custom_emoji is None:
+        await ctx.reply(embed=dark_red_embed(
+            "⚙️ Cara Pakai",
+            f"`!Doom setemoji {key} <emoji_server>` — Set emoji custom untuk `{key}`\n"
+            f"`!Doom setemoji {key} reset` — Balikin ke emoji default\n"
+            f"`!Doom setemoji list` — Lihat semua emoji yang bisa diatur"
+        ))
+        return
+
+    if custom_emoji.lower() == "reset":
+        cfg.pop(key, None)
+        save_emoji_config(cfg)
+        await ctx.reply(embed=dark_red_embed(f"{emoji('success')} Emoji Direset", f"`{key}` balik ke default: {DEFAULT_EMOJIS[key]}"))
+        return
+
+    # Validasi: harus emoji custom server (format <:name:id> / <a:name:id>) atau unicode emoji biasa
+    is_custom_guild_emoji = bool(re.match(r"^<a?:\w+:\d+>$", custom_emoji.strip()))
+    if not is_custom_guild_emoji and len(custom_emoji.strip()) > 4:
+        await ctx.reply(embed=dark_red_embed(
+            f"{emoji('fail')} Emoji Gak Valid",
+            "Kirim emoji custom server (misal: `<:namaemoji:123456789>`) atau emoji unicode biasa."
+        ))
+        return
+
+    cfg[key] = custom_emoji.strip()
+    save_emoji_config(cfg)
+    await ctx.reply(embed=dark_red_embed(f"{emoji('success')} Emoji Diset!", f"`{key}` sekarang jadi {custom_emoji.strip()}"))
+
+
+# ===================== HELP COMMAND =====================
+
 
 @bot.command(name="help", aliases=["h"])
 async def help_cmd(ctx):
     if await check_maintenance(ctx):
         return
     em = dark_red_embed("📖 DOOMINIKS PARADISE — Help", "Your complete multipurpose server bot!")
-    em.add_field(name="🎣 Fishing",   value="`fish` `coins`",                                         inline=True)
+    em.add_field(name="🎣 Fishing",   value=f"`fish` `coins` `daily` `quest` {emoji('coin')}",       inline=True)
     em.add_field(name="🧠 Tebak-Tebakan", value="`tebak` `addtebak` `listtebak` `removetebak` | `/tebak` (Arena) `/tambahsoal`", inline=True)
     em.add_field(name="⚠️ Mod",       value="`warn` `warns` `kick` `ban` `timeout` `move` `clear`",  inline=False)
     em.add_field(name="👤 Info",      value="`avatar` `userinfo` `ping`",                              inline=True)
-    em.add_field(name="🎭 Role",      value="`addrole` `removerole`",                                  inline=True)
+    em.add_field(name="🎭 Role",      value="`addrole` `removerole` | `/reactionrole`",                inline=True)
     em.add_field(name="📢 Utility",   value="`embed` `setmainchannel` `sticky` `autoresponse` `giveaway` `event` `addemoji`", inline=False)
     em.add_field(name="👑 Premium",   value="`premium` — Lihat info & order premium",                  inline=False)
     em.add_field(name="🗳️ Vote",      value="`vote` — Link vote Top.gg | `claimvote` — Claim reward vote", inline=False)
-    em.add_field(name="🌐 Bahasa",    value="`setlang [kode]` — Ganti bahasa bot (en/de/ar/th/ja)", inline=False)
+    em.add_field(
+        name="👑 Owner Only",
+        value=(
+            "`noprefix add/remove/list @user` — Kasih/cabut akses command tanpa prefix\n"
+            "`setemoji <key> <emoji>` — Ganti emoji bot pakai emoji custom server"
+        ),
+        inline=False
+    )
     em.add_field(name="📡 Notifikasi", value="`setmaintenancechannel #channel` — Pilih channel notif maintenance *(owner bot only)*", inline=False)
-    em.set_footer(text="Prefix: !Doom | Semua command bisa pake slash juga!")
+    em.set_footer(text="Prefix: !Doom | Semua command bisa pake slash juga! | Ketik !Doom quest buat cek progress mancing lo")
     await ctx.reply(embed=em)
 
 # ===================== SLASH COMMANDS =====================
@@ -3417,131 +3454,6 @@ async def slash_fish(interaction: discord.Interaction):
     em = dark_red_embed("🎣 DOOMINIKS PARADISE Fishing", f"Hey **{interaction.user.display_name}**! Choose your action:")
     await interaction.response.send_message(embed=em, view=FishingMainView(interaction.user.id))
 
-@tree.command(name="ticket", description="Setup panel ticket")
-@app_commands.describe(
-    judul="Judul embed panel ticket",
-    deskripsi="Deskripsi panel ticket",
-    button_label="Label button buka ticket",
-    button_emoji="Emoji button",
-    kategori="ID kategori channel ticket"
-)
-@app_commands.default_permissions(administrator=True)
-async def slash_ticket(interaction: discord.Interaction, judul: str = "🎫 Support Ticket", deskripsi: str = "Klik button untuk buka ticket!", button_label: str = "Buka Ticket", button_emoji: str = "🎫", kategori: str = None):
-    if await check_premium_gate_slash(interaction, "ticket"): return
-
-    panel_id     = str(int(time.time()))
-    panel_config = {
-        "panel_id":       panel_id,
-        "button_label":   button_label,
-        "button_emoji":   button_emoji,
-        "description":    deskripsi,
-        "category_id":    kategori,
-        "whitelist_roles": [],
-        "thumbnail_url":  None,
-        "image_url":      None,
-    }
-
-    def check_author(m):
-        return m.author.id == interaction.user.id and m.channel.id == interaction.channel_id
-
-    # ── LANGKAH 1: Tanya whitelist role ──────────────────────────────────────
-    await interaction.response.send_message(
-        embed=discord.Embed(
-            title="🎫 Setup Ticket — Langkah 1/2: Whitelist Role",
-            description=(
-                "Mention **role-role** yang bisa lihat & urus ticket di server ini.\n\n"
-                "**Contoh:** `@Staff @Moderator @Support`\n\n"
-                "Ketik `skip` kalau tidak mau set whitelist role.\n"
-                "*(Timeout 60 detik)*"
-            ),
-            color=DARK_RED
-        ),
-        ephemeral=True
-    )
-    try:
-        msg_role = await bot.wait_for("message", check=check_author, timeout=60)
-        if msg_role.content.strip().lower() != "skip":
-            panel_config["whitelist_roles"] = [str(r.id) for r in msg_role.role_mentions]
-        try:
-            await msg_role.delete()
-        except:
-            pass
-    except asyncio.TimeoutError:
-        pass  # lanjut tanpa whitelist role
-
-    # ── LANGKAH 2: Tanya gambar (thumbnail & image via attachment) ────────────
-    await interaction.followup.send(
-        embed=discord.Embed(
-            title="🎫 Setup Ticket — Langkah 2/2: Gambar (Opsional)",
-            description=(
-                "Upload gambar sebagai **attachment Discord** untuk embed ticket.\n\n"
-                "• **1 gambar** → jadi **thumbnail** (pojok kanan atas embed)\n"
-                "• **2 gambar** → gambar pertama jadi **thumbnail**, kedua jadi **gambar besar**\n\n"
-                "Ketik `skip` kalau tidak mau tambah gambar.\n"
-                "*(Timeout 60 detik)*"
-            ),
-            color=DARK_RED
-        ),
-        ephemeral=True
-    )
-    try:
-        msg_img = await bot.wait_for("message", check=check_author, timeout=60)
-        if msg_img.content.strip().lower() != "skip":
-            valid_exts = [".png", ".jpg", ".jpeg", ".gif", ".webp"]
-            attachments = [a for a in msg_img.attachments if any(a.filename.lower().endswith(e) for e in valid_exts)]
-            if len(attachments) >= 1:
-                panel_config["thumbnail_url"] = attachments[0].url
-            if len(attachments) >= 2:
-                panel_config["image_url"] = attachments[1].url
-        try:
-            await msg_img.delete()
-        except:
-            pass
-    except asyncio.TimeoutError:
-        pass  # lanjut tanpa gambar
-
-    # ── Build & kirim panel ───────────────────────────────────────────────────
-    em = dark_red_embed(judul, deskripsi)
-    if panel_config.get("thumbnail_url"):
-        em.set_thumbnail(url=panel_config["thumbnail_url"])
-    if panel_config.get("image_url"):
-        em.set_image(url=panel_config["image_url"])
-
-    view = TicketView(panel_config)
-    await interaction.channel.send(embed=em, view=view)
-
-    td = get_tickets()
-    td.setdefault("panels", {})[panel_id] = panel_config
-    save_tickets(td)
-
-    # Ringkasan setup
-    roles_set  = len(panel_config["whitelist_roles"])
-    thumb_set  = "✅" if panel_config.get("thumbnail_url") else "➖"
-    image_set  = "✅" if panel_config.get("image_url") else "➖"
-    await interaction.followup.send(
-        embed=discord.Embed(
-            title="✅ Panel Ticket Berhasil Dibuat!",
-            description=(
-                f"**👥 Whitelist Role:** {roles_set} role diset\n"
-                f"**🖼️ Thumbnail:** {thumb_set}\n"
-                f"**🖼️ Gambar Besar:** {image_set}\n\n"
-                "Panel ticket sudah aktif di channel ini!"
-            ),
-            color=0x00FF88
-        ),
-        ephemeral=True
-    )
-
-@tree.command(name="leveling", description="Setup fitur leveling")
-@app_commands.default_permissions(administrator=True)
-async def slash_leveling(interaction: discord.Interaction):
-    if await check_premium_gate_slash(interaction, "leveling"): return
-    config = get_config()
-    gid    = str(interaction.guild.id)
-    config.setdefault(gid, {})
-    status = "✅ AKTIF" if config[gid].get("leveling_enabled", True) else "❌ NONAKTIF"
-    em = dark_red_embed("⚙️ Setup Leveling", f"**Status:** {status}\n\nPake button untuk setup!")
-    await interaction.response.send_message(embed=em, view=LevelingSetupView(interaction.guild.id))
 
 @tree.command(name="reactionrole", description="Setup reaction role dengan button")
 @app_commands.describe(judul="Judul embed", deskripsi="Deskripsi", role1="Role pertama", emoji1="Emoji 1", label1="Label 1", role2="Role kedua", emoji2="Emoji 2", label2="Label 2")
@@ -3980,81 +3892,165 @@ async def slash_addtebak(interaction: discord.Interaction, soal: str, jawaban: s
 async def slash_coins(interaction: discord.Interaction):
     if await check_premium_gate_slash(interaction, "coins"): return
     udata = get_user_fishing(str(interaction.user.id))
-    await interaction.response.send_message(embed=dark_red_embed("🪙 Koin Lo", f"**{interaction.user.display_name}** punya **{udata['coins']} koin** 🪙"), ephemeral=True)
+    await interaction.response.send_message(embed=dark_red_embed(f"{emoji('coin')} Koin Lo", f"**{interaction.user.display_name}** punya **{udata['coins']} koin** {emoji('coin')}"), ephemeral=True)
 
-@tree.command(name="leaderboard", description="Lihat leaderboard level")
+@tree.command(name="leaderboard", description="Lihat leaderboard koin terbanyak")
 async def slash_leaderboard(interaction: discord.Interaction):
     if await check_premium_gate_slash(interaction, "leaderboard"): return
-    levels      = get_levels()
-    gid         = str(interaction.guild.id)
-    guild_levels = levels.get(gid, {})
-    sorted_users = sorted(guild_levels.items(), key=lambda x: (x[1]["level"], x[1]["xp"]), reverse=True)[:10]
+    fdata = get_fishing_data()
+    sorted_users = sorted(fdata.items(), key=lambda x: x[1].get("coins", 0), reverse=True)[:10]
     if not sorted_users:
-        await interaction.response.send_message("📊 Belum ada data level!", ephemeral=True)
+        await interaction.response.send_message("📊 Belum ada data koin!", ephemeral=True)
         return
     text = ""
     for i, (uid, data) in enumerate(sorted_users):
         member = interaction.guild.get_member(int(uid))
         name   = member.display_name if member else f"User {uid[:6]}"
         medal  = ["🥇", "🥈", "🥉"][i] if i < 3 else f"{i+1}."
-        text  += f"{medal} **{name}** — Level {data['level']} ({data['xp']} XP)\n"
-    await interaction.response.send_message(embed=dark_red_embed("🏆 Leaderboard Level", text))
+        text  += f"{medal} **{name}** — {data.get('coins', 0)} {emoji('coin')}\n"
+    await interaction.response.send_message(embed=dark_red_embed(f"{emoji('coin')} Leaderboard Koin", text))
 
-@tree.command(name="setlang", description="Change bot language / Ganti bahasa bot")
-@app_commands.describe(
-    language="Language code: id / en / de / ar / th / ja (default: en)"
-)
-async def slash_setlang(interaction: discord.Interaction, language: str = None):
-    """Slash version of setlang command."""
-    if await check_premium_gate_slash(interaction, "setlang"): return
-    uid = interaction.user.id
+@tree.command(name="daily", description="Klaim koin harian")
+async def slash_daily(interaction: discord.Interaction):
+    if await check_premium_gate_slash(interaction, "daily"): return
+    uid    = str(interaction.user.id)
+    record = get_user_daily(uid)
+    now    = time.time()
+    elapsed = now - record.get("last_claim", 0)
+    cooldown_s = DAILY_COOLDOWN_H * 3600
 
-    # Owner selalu id_gaul, tidak bisa diubah
-    if uid == OWNER_ID:
-        em = discord.Embed(
-            title="👑 Language / Bahasa",
-            description="Sebagai **Owner Bot**, bahasa lo dikunci ke **🇮🇩 Indonesia Gaul** permanen dan tidak bisa diubah.",
-            color=DARK_RED
+    if elapsed < cooldown_s:
+        sisa_s = int(cooldown_s - elapsed)
+        sisa_h, sisa_m = sisa_s // 3600, (sisa_s % 3600) // 60
+        await interaction.response.send_message(
+            embed=discord.Embed(title="⏰ Udah Klaim Daily Hari Ini!", description=f"Sabar bro, klaim lagi dalam **{sisa_h} jam {sisa_m} menit**.", color=DARK_RED),
+            ephemeral=True
         )
-        await interaction.response.send_message(embed=em, ephemeral=True)
         return
 
-    valid_codes  = [lc for lc in SUPPORTED_LANGS if lc != "id_gaul"]
-    options_text = "\n".join([f"• `{code}` — {name}" for code, name in SUPPORTED_LANGS.items() if code != "id_gaul"])
+    if elapsed <= DAILY_STREAK_GRACE_H * 3600:
+        streak = record.get("streak", 0) + 1
+    else:
+        streak = 1
 
-    if not language:
-        current_lang = get_user_lang(uid)
-        current_name = SUPPORTED_LANGS.get(current_lang, current_lang)
-        em = discord.Embed(
-            title=t("setlang_title", uid),
-            description=t("setlang_current", uid,
-                lang=current_name,
-                options=options_text
-            ),
-            color=DARK_RED
-        )
-        await interaction.response.send_message(embed=em, ephemeral=True)
-        return
+    streak_bonus = min(streak * DAILY_STREAK_BONUS_PER_DAY, DAILY_STREAK_BONUS_CAP)
+    base_reward  = random.randint(DAILY_COIN_MIN, DAILY_COIN_MAX)
+    total_reward = base_reward + streak_bonus
 
-    code = language.lower().strip()
-    if code not in valid_codes:
-        opts = ", ".join([f"`{lc}`" for lc in valid_codes])
-        em = discord.Embed(
-            title="❌ Invalid Language",
-            description=t("setlang_invalid", uid, options=opts),
-            color=0xFF4444
-        )
-        await interaction.response.send_message(embed=em, ephemeral=True)
-        return
+    udata = get_user_fishing(uid)
+    udata["coins"] += total_reward
+    save_user_fishing(uid, udata)
+    set_user_daily(uid, {"last_claim": now, "streak": streak})
 
-    set_user_lang(uid, code)
-    lang_name = SUPPORTED_LANGS[code]
     em = discord.Embed(
-        title=t("setlang_title", uid),
-        description=t("setlang_changed", uid, lang=lang_name),
+        title=f"{emoji('daily')} Daily Login Diklaim!",
+        description=(
+            f"Makasih udah mampir **{interaction.user.display_name}**! 🔥\n\n"
+            f"**{emoji('coin')} Koin Didapat:** +{base_reward} (base) + {streak_bonus} (streak bonus) = **{total_reward} koin**\n"
+            f"**{emoji('streak')} Streak Lo:** {streak} hari berturut-turut\n"
+            f"**{emoji('coin')} Total Koin:** {udata['coins']}"
+        ),
         color=0x00FF88
     )
-    await interaction.response.send_message(embed=em, ephemeral=True)
+    em.set_thumbnail(url=interaction.user.display_avatar.url)
+    await interaction.response.send_message(embed=em)
+
+@tree.command(name="quest", description="Lihat progress quest mancing lo")
+async def slash_quest(interaction: discord.Interaction):
+    if await check_premium_gate_slash(interaction, "quest"): return
+    uid     = str(interaction.user.id)
+    udata   = get_user_fishing(uid)
+    claimed = set(udata.get("claimed_quests", []))
+    total   = udata.get("total_catch", 0)
+
+    lines = []
+    for q in FISHING_QUESTS:
+        done = q["id"] in claimed
+        mark = "✅" if done else f"{min(total, q['target'])}/{q['target']}"
+        reward_txt = f"+{q['reward_coins']} {emoji('coin')}"
+        if q["reward_rod"]:
+            reward_txt += f" + {q['reward_rod']}"
+        lines.append(f"{'✅' if done else '⬜'} **{q['label']}** — {mark}  *({reward_txt})*")
+
+    em = discord.Embed(
+        title=f"{emoji('quest')} Quest Mancing Lo",
+        description=f"**Total Tangkapan:** {total} ikan\n\n" + "\n".join(lines),
+        color=DARK_RED
+    )
+    em.set_thumbnail(url=interaction.user.display_avatar.url)
+    await interaction.response.send_message(embed=em)
+
+@tree.command(name="noprefix", description="Owner: atur akses no-prefix user lain")
+@app_commands.describe(action="add / remove / list", member="User yang mau diatur")
+async def slash_noprefix(interaction: discord.Interaction, action: str = "list", member: discord.Member = None):
+    if interaction.user.id != OWNER_ID:
+        await interaction.response.send_message(embed=dark_red_embed("❌ No Permission!", "Cuma Owner Bot yang bisa atur no-prefix access!"), ephemeral=True)
+        return
+    users = get_noprefix_users()
+    action = action.lower()
+
+    if action == "list":
+        desc = "\n".join([f"• <@{u}>" for u in users]) if users else "Belum ada user yang dikasih akses no-prefix."
+        await interaction.response.send_message(embed=dark_red_embed("📋 Daftar User No-Prefix", desc), ephemeral=True)
+        return
+
+    if action not in ("add", "remove") or member is None:
+        await interaction.response.send_message(embed=dark_red_embed("⚙️ Cara Pakai", "`/noprefix add @user` · `/noprefix remove @user` · `/noprefix list`"), ephemeral=True)
+        return
+
+    uid = str(member.id)
+    if action == "add":
+        if uid in users:
+            await interaction.response.send_message(embed=dark_red_embed(f"{emoji('fail')} Udah Punya Akses", f"{member.mention} udah punya akses no-prefix bro!"), ephemeral=True)
+            return
+        users.append(uid)
+        save_noprefix_users(users)
+        await interaction.response.send_message(embed=dark_red_embed(f"{emoji('success')} No-Prefix Diaktifkan", f"{member.mention} sekarang bisa pakai command tanpa prefix `!Doom`!"))
+    else:
+        if uid not in users:
+            await interaction.response.send_message(embed=dark_red_embed(f"{emoji('fail')} Gak Ketemu", f"{member.mention} emang belum punya akses no-prefix."), ephemeral=True)
+            return
+        users.remove(uid)
+        save_noprefix_users(users)
+        await interaction.response.send_message(embed=dark_red_embed(f"{emoji('success')} No-Prefix Dicabut", f"Akses no-prefix {member.mention} udah dicabut."))
+
+@tree.command(name="setemoji", description="Owner: atur emoji custom server buat bot")
+@app_commands.describe(key="Nama key emoji (contoh: coin, fish, quest)", custom_emoji="Emoji custom server, atau 'reset'")
+async def slash_setemoji(interaction: discord.Interaction, key: str = "list", custom_emoji: str = None):
+    if interaction.user.id != OWNER_ID:
+        await interaction.response.send_message(embed=dark_red_embed("❌ No Permission!", "Cuma Owner Bot yang bisa atur emoji bot!"), ephemeral=True)
+        return
+    cfg = get_emoji_config()
+    key = key.lower()
+
+    if key == "list":
+        lines = [f"`{k}` → {cfg.get(k, DEFAULT_EMOJIS[k])} {'*(custom)*' if k in cfg else '*(default)*'}" for k in DEFAULT_EMOJIS]
+        await interaction.response.send_message(embed=dark_red_embed("🖼️ Emoji Bot Saat Ini", "\n".join(lines)), ephemeral=True)
+        return
+
+    if key not in DEFAULT_EMOJIS:
+        opts = ", ".join([f"`{k}`" for k in DEFAULT_EMOJIS])
+        await interaction.response.send_message(embed=dark_red_embed("❌ Key Tidak Valid", f"Key yang tersedia: {opts}"), ephemeral=True)
+        return
+
+    if custom_emoji is None:
+        await interaction.response.send_message(embed=dark_red_embed("⚙️ Cara Pakai", f"`/setemoji {key} <emoji_server>` atau `/setemoji {key} reset`"), ephemeral=True)
+        return
+
+    if custom_emoji.lower() == "reset":
+        cfg.pop(key, None)
+        save_emoji_config(cfg)
+        await interaction.response.send_message(embed=dark_red_embed(f"{emoji('success')} Emoji Direset", f"`{key}` balik ke default: {DEFAULT_EMOJIS[key]}"), ephemeral=True)
+        return
+
+    is_custom_guild_emoji = bool(re.match(r"^<a?:\w+:\d+>$", custom_emoji.strip()))
+    if not is_custom_guild_emoji and len(custom_emoji.strip()) > 4:
+        await interaction.response.send_message(embed=dark_red_embed(f"{emoji('fail')} Emoji Gak Valid", "Kirim emoji custom server (misal: `<:namaemoji:123456789>`) atau emoji unicode biasa."), ephemeral=True)
+        return
+
+    cfg[key] = custom_emoji.strip()
+    save_emoji_config(cfg)
+    await interaction.response.send_message(embed=dark_red_embed(f"{emoji('success')} Emoji Diset!", f"`{key}` sekarang jadi {custom_emoji.strip()}"), ephemeral=True)
 
 # ===================== SET MAINTENANCE CHANNEL =====================
 
@@ -4103,7 +4099,7 @@ async def slash_setmaintenancechannel(interaction: discord.Interaction, channel:
     except:
         pass
 
-@bot.command(name="setmaintenancechannel")
+@bot.command(name="setmaintenancechannel", aliases=["setmaintchannel", "maintchannel"])
 @commands.has_permissions(administrator=True)
 async def prefix_setmaintenancechannel(ctx, channel: discord.TextChannel = None):
     """Admin server bisa pilih channel notif maintenance untuk server mereka sendiri."""
@@ -4148,7 +4144,7 @@ async def prefix_setmaintenancechannel(ctx, channel: discord.TextChannel = None)
 
 # ===================== VOTE TOP.GG COMMANDS =====================
 
-@bot.command(name="vote")
+@bot.command(name="vote", aliases=["upvote"])
 async def vote_cmd(ctx):
     """Kirim link vote bot di Top.gg."""
     if await check_maintenance(ctx):
@@ -4210,7 +4206,7 @@ async def claimvote_cmd(ctx):
             description=t("vote_not_voted_desc", uid_nv, url=vote_url),
             color=0xFF4444
         )
-        em.set_footer(text="Vote dulu bro baru bisa claim reward!" if get_user_lang(uid_nv) == "id_gaul" else "Vote first to claim reward!")
+        em.set_footer(text="Vote dulu bro baru bisa claim reward!")
         await ctx.reply(embed=em)
         return
 
