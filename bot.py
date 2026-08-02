@@ -546,6 +546,87 @@ def emoji(key: str) -> str:
     return cfg.get(key, DEFAULT_EMOJIS.get(key, ""))
 
 
+# ===================== SPIN WHEEL SYSTEM =====================
+# Spin wheel pake koin. Hadiah rod sengaja dibikin SULIT BANGET (weight kecil),
+# hadiah koin & umpan jauh lebih sering keluar. Owner bisa full custom daftar
+# hadiah + peluangnya lewat panel "!Kingdoom spinwheel".
+DEFAULT_SPIN_COST = 100
+
+DEFAULT_SPIN_PRIZES = [
+    {"type": "coin",  "label": "Koin Receh",      "weight": 35,   "min": 20,  "max": 80},
+    {"type": "coin",  "label": "Koin Lumayan",     "weight": 20,   "min": 100, "max": 250},
+    {"type": "bait",  "label": "Cacing Biasa",     "weight": 15,   "name": "Cacing Biasa", "qty": 3},
+    {"type": "bait",  "label": "Jangkrik",         "weight": 10,   "name": "Jangkrik",     "qty": 2},
+    {"type": "coin",  "label": "Jackpot Koin",     "weight": 5,    "min": 500, "max": 1000},
+    {"type": "trash", "label": "Zonk",             "weight": 11.65},
+    {"type": "rod",   "label": "Pancing Kayu",     "weight": 3,    "name": "Pancing Kayu"},
+    {"type": "rod",   "label": "Pancing Besi",     "weight": 1.5,  "name": "Pancing Besi"},
+    {"type": "rod",   "label": "Pancing Titan",    "weight": 0.3,  "name": "Pancing Titan"},
+    {"type": "rod",   "label": "Pancing Legenda",  "weight": 0.05, "name": "Pancing Legenda"},
+]
+
+def get_spin_config():
+    """Load config spin wheel (cost + prizes) dari JSON, fallback ke default
+    kalau kosong (bukan cuma kalau key hilang, biar gak kena bug yang sama
+    kayak fishing_config kemarin)."""
+    cfg    = load_json("spin_config.json", {})
+    cost   = cfg.get("cost")   or DEFAULT_SPIN_COST
+    prizes = cfg.get("prizes") or DEFAULT_SPIN_PRIZES
+    return cost, prizes
+
+def save_spin_config(cost, prizes):
+    save_json("spin_config.json", {"cost": cost, "prizes": prizes})
+
+def spin_prize_label(p: dict) -> str:
+    t_ = p.get("type")
+    if t_ == "rod":
+        return f"🎣 Rod **{p.get('name')}**"
+    if t_ == "coin":
+        return f"🪙 Koin **{p.get('min')}-{p.get('max')}**"
+    if t_ == "bait":
+        return f"🪱 Umpan **{p.get('name')} x{p.get('qty')}**"
+    return f"💩 {p.get('label', 'Zonk')}"
+
+def spin_chance_lines(prizes: list) -> str:
+    total = sum(max(p.get("weight", 0), 0) for p in prizes) or 1
+    lines = []
+    for p in prizes:
+        pct = max(p.get("weight", 0), 0) / total * 100
+        lines.append(f"{spin_prize_label(p)} — **{pct:.2f}%**")
+    return "\n".join(lines)
+
+def do_spin_roll() -> dict:
+    """Weighted random pick 1 hadiah dari config spin wheel."""
+    _, prizes = get_spin_config()
+    weights = [max(p.get("weight", 0), 0.0001) for p in prizes]
+    return random.choices(prizes, weights=weights, k=1)[0]
+
+def apply_spin_prize(uid: str, prize: dict) -> str:
+    """Terapkan hadiah spin ke data user, return teks hasil buat ditampilin."""
+    udata = get_user_fishing(uid)
+    ptype = prize.get("type")
+    if ptype == "rod":
+        rod_name = prize.get("name")
+        udata["rod"] = rod_name
+        save_user_fishing(uid, udata)
+        return f"🎉 **JACKPOT LANGKA!** Lo dapet rod **{rod_name}**! Langsung otomatis kepasang, gaskeun mancing! 🔥"
+    elif ptype == "coin":
+        amount = random.randint(int(prize.get("min", 0)), int(prize.get("max", 0)))
+        udata["coins"] += amount
+        save_user_fishing(uid, udata)
+        return f"🪙 Lo dapet **{amount} koin**! Total koin lo sekarang: **{udata['coins']}** 🪙"
+    elif ptype == "bait":
+        bait_name = prize.get("name")
+        qty       = int(prize.get("qty", 1))
+        udata.setdefault("bait", {})
+        udata["bait"][bait_name] = udata["bait"].get(bait_name, 0) + qty
+        save_user_fishing(uid, udata)
+        return f"🪱 Lo dapet **{bait_name} x{qty}**! Langsung masuk inventori umpan lo."
+    else:
+        label = prize.get("label", "Zonk")
+        return f"💩 Yah, **{label}**! Gak dapet apa-apa kali ini. Coba lagi bestie!"
+
+
 # ===================== TEKS BOT (id_gaul, fixed) =====================
 # Semua teks bot yang bisa diterjemahkan
 # Key = kode string, Value = dict per bahasa
@@ -1154,6 +1235,8 @@ async def on_message(message):
                     await premium_setup_panel(ctx)
                 elif sub == "setfishing":
                     await fishing_setup_panel(ctx)
+                elif sub == "spinwheel":
+                    await spinwheel_setup_panel(ctx)
                 elif sub == "maintenance":
                     await maintenance_panel(ctx)
                 else:
@@ -1162,6 +1245,7 @@ async def on_message(message):
                         "**Subcommand tersedia:**\n"
                         "• `!Kingdoom premium` — Setup sistem premium\n"
                         "• `!Kingdoom setfishing` — Setup fishing\n"
+                        "• `!Kingdoom spinwheel` — Setup spin wheel (hadiah rod/koin/umpan + harga)\n"
                         "• `!Kingdoom maintenance` — Toggle maintenance\n\n"
                         "*Panel ini hanya bisa diakses owner/admin.*"
                     ))
@@ -1691,6 +1775,73 @@ class FishingMainView(discord.ui.LayoutView):
             return
         await interaction.response.send_message(view=ShopBuyView(interaction.user.id), ephemeral=True)
 
+# ===================== SPIN WHEEL VIEW =====================
+
+class SpinWheelView(discord.ui.LayoutView):
+    """Panel spin wheel pake koin. Hadiah rod SENGAJA dibikin langka banget,
+    hadiah lain koin/umpan jauh lebih sering keluar. Config full bisa diatur
+    owner lewat '!Kingdoom spinwheel'."""
+    def __init__(self, user_id, body_text: str | None = None):
+        super().__init__(timeout=120)
+        self.user_id  = user_id
+        self.body_text = body_text or f"Hey <@{user_id}>! Pencet tombol di bawah buat coba keberuntungan lo!"
+        self._build()
+
+    def _build(self):
+        self.clear_items()
+        cost, _ = get_spin_config()
+        udata   = get_user_fishing(str(self.user_id))
+        container = discord.ui.Container(accent_colour=DARK_RED)
+        container.add_item(discord.ui.TextDisplay(
+            f"### 🎰 StartDoom Spin Wheel\n{self.body_text}\n\n"
+            f"**Biaya sekali putar:** {cost} 🪙 | **Koin lo:** {udata['coins']} 🪙"
+        ))
+        container.add_item(discord.ui.Separator())
+
+        spin_btn = discord.ui.Button(label=f"Putar! ({cost} 🪙)", emoji="🎰", style=discord.ButtonStyle.danger)
+        info_btn = discord.ui.Button(label="Peluang Hadiah", emoji="📊", style=discord.ButtonStyle.secondary)
+        spin_btn.callback = self.spin
+        info_btn.callback = self.show_chances
+
+        row = discord.ui.ActionRow()
+        row.add_item(spin_btn)
+        row.add_item(info_btn)
+        container.add_item(row)
+
+        self.add_item(container)
+
+    async def spin(self, interaction: discord.Interaction):
+        if interaction.user.id != self.user_id:
+            await interaction.response.send_message("❌ Ini bukan giliran lo bro, putar punya lo sendiri!", ephemeral=True)
+            return
+        uid  = str(interaction.user.id)
+        cost, _ = get_spin_config()
+        udata = get_user_fishing(uid)
+        if udata["coins"] < cost:
+            await interaction.response.send_message(
+                f"❌ Koin lo kurang! Butuh **{cost}** 🪙, koin lo cuma **{udata['coins']}** 🪙. Mancing/jual ikan dulu ya!",
+                ephemeral=True
+            )
+            return
+
+        udata["coins"] -= cost
+        save_user_fishing(uid, udata)
+
+        prize       = do_spin_roll()
+        result_text = apply_spin_prize(uid, prize)
+
+        self.body_text = f"🎉 **Hasil Putaran {interaction.user.display_name}:**\n{result_text}"
+        self._build()
+        await interaction.response.edit_message(view=self)
+
+    async def show_chances(self, interaction: discord.Interaction):
+        _, prizes = get_spin_config()
+        await interaction.response.send_message(
+            view=panel("📊 Peluang Hadiah Spin Wheel", spin_chance_lines(prizes),
+                       footer="Nikoliesamphink · Spin Wheel · Peluang bisa berubah kapan aja diatur owner"),
+            ephemeral=True
+        )
+
 # ===================== QUEST PANEL VIEW (Daily / Quests tab) =====================
 
 class QuestPanelView(discord.ui.LayoutView):
@@ -1999,6 +2150,133 @@ async def fishing_setup_panel(ctx):
     )
     em.set_footer(text="⚠️ Panel ini hanya untuk Owner/Admin")
     await ctx.send(embed=em, view=FishingSetupView())
+
+# ===================== SPIN WHEEL SETUP PANEL (Owner Only) =====================
+
+class SpinSetupView(discord.ui.View):
+    """Panel owner buat atur hadiah spin wheel (rod/koin/umpan custom + peluang)
+    dan harga sekali putar."""
+    def __init__(self):
+        super().__init__(timeout=300)
+
+    @discord.ui.button(label="🎁 Edit Daftar Hadiah", style=discord.ButtonStyle.primary, row=0)
+    async def edit_prizes(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if interaction.user.id != OWNER_ID:
+            await interaction.response.send_message("❌ Hanya Owner Bot yang bisa mengatur spin wheel!", ephemeral=True)
+            return
+        cost, prizes = get_spin_config()
+        _, rods, baits = get_fishing_config()
+        rod_names  = ", ".join(r["name"] for r in rods) or "-"
+        bait_names = ", ".join(b["name"] for b in baits) or "-"
+        lines = "\n".join([f"{i+1}. [{p['type']}] {spin_prize_label(p)} | weight:{p.get('weight')}" for i, p in enumerate(prizes)])
+        await interaction.response.send_message(
+            f"🎁 **Daftar Hadiah Saat Ini:**\n```{lines}```\n\n"
+            "Kirim daftar hadiah baru, **1 baris per hadiah**, format sesuai tipe:\n"
+            "• Rod  → `rod|nama_rod|weight`\n"
+            "• Koin → `coin|label|weight|min|max`\n"
+            "• Umpan → `bait|nama_umpan|weight|jumlah`\n"
+            "• Zonk → `trash|label|weight`\n\n"
+            f"⚠️ Nama rod harus salah satu dari: `{rod_names}`\n"
+            f"⚠️ Nama umpan harus salah satu dari: `{bait_names}`\n"
+            "*(Weight makin kecil = makin langka. Bikin weight rod KECIL BANGET biar susah dapetnya.)*\n\n"
+            "Contoh:\n"
+            "```coin|Koin Receh|35|20|80\nbait|Cacing Biasa|15|3\nrod|Pancing Titan|0.3\ntrash|Zonk|11.65```\n"
+            "⚠️ Ini akan **REPLACE** semua hadiah. Kirim dalam 120 detik.",
+            ephemeral=True
+        )
+        try:
+            msg = await bot.wait_for("message", check=lambda m: m.author.id == interaction.user.id, timeout=120)
+            valid_rod_names  = {r["name"] for r in rods}
+            valid_bait_names = {b["name"] for b in baits}
+            new_prizes = []
+            skipped    = []
+            for line in msg.content.strip().split("\n"):
+                parts = [p.strip() for p in line.split("|")]
+                if not parts or not parts[0]:
+                    continue
+                ptype = parts[0].lower()
+                try:
+                    if ptype == "rod" and len(parts) >= 3:
+                        name, weight = parts[1], float(parts[2])
+                        if name not in valid_rod_names:
+                            skipped.append(line); continue
+                        new_prizes.append({"type": "rod", "label": name, "name": name, "weight": weight})
+                    elif ptype == "coin" and len(parts) >= 5:
+                        label, weight, mn, mx = parts[1], float(parts[2]), int(parts[3]), int(parts[4])
+                        new_prizes.append({"type": "coin", "label": label, "weight": weight, "min": mn, "max": mx})
+                    elif ptype == "bait" and len(parts) >= 4:
+                        name, weight, qty = parts[1], float(parts[2]), int(parts[3])
+                        if name not in valid_bait_names:
+                            skipped.append(line); continue
+                        new_prizes.append({"type": "bait", "label": name, "name": name, "weight": weight, "qty": qty})
+                    elif ptype == "trash" and len(parts) >= 3:
+                        label, weight = parts[1], float(parts[2])
+                        new_prizes.append({"type": "trash", "label": label, "weight": weight})
+                    else:
+                        skipped.append(line)
+                except Exception:
+                    skipped.append(line)
+
+            if not new_prizes:
+                await interaction.followup.send("❌ Gak ada hadiah valid yang bisa disimpan! Cek lagi format & nama rod/umpannya.", ephemeral=True)
+                return
+            save_spin_config(cost, new_prizes)
+            msg_txt = f"✅ **{len(new_prizes)} hadiah** berhasil disimpan!"
+            if skipped:
+                msg_txt += f"\n⚠️ **{len(skipped)} baris dilewati** (format salah / nama rod-umpan gak ketemu):\n```{chr(10).join(skipped[:10])}```"
+            await interaction.followup.send(msg_txt, ephemeral=True)
+        except asyncio.TimeoutError:
+            await interaction.followup.send("⏰ Timeout!", ephemeral=True)
+
+    @discord.ui.button(label="💰 Edit Harga Putar", style=discord.ButtonStyle.secondary, row=0)
+    async def edit_cost(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if interaction.user.id != OWNER_ID:
+            await interaction.response.send_message("❌ Hanya Owner Bot yang bisa mengatur spin wheel!", ephemeral=True)
+            return
+        cost, prizes = get_spin_config()
+        await interaction.response.send_message(
+            f"💰 **Harga sekali putar saat ini:** {cost} 🪙\n\nKetik angka harga baru (koin). Kirim dalam 60 detik.",
+            ephemeral=True
+        )
+        try:
+            msg = await bot.wait_for("message", check=lambda m: m.author.id == interaction.user.id, timeout=60)
+            new_cost = int(msg.content.strip())
+            if new_cost < 1:
+                await interaction.followup.send("❌ Harga harus lebih dari 0!", ephemeral=True)
+                return
+            save_spin_config(new_cost, prizes)
+            await interaction.followup.send(f"✅ Harga sekali putar diubah jadi **{new_cost}** 🪙!", ephemeral=True)
+        except ValueError:
+            await interaction.followup.send("❌ Itu bukan angka valid!", ephemeral=True)
+        except asyncio.TimeoutError:
+            await interaction.followup.send("⏰ Timeout!", ephemeral=True)
+
+    @discord.ui.button(label="📋 Lihat Config", style=discord.ButtonStyle.success, row=1)
+    async def view_config(self, interaction: discord.Interaction, button: discord.ui.Button):
+        cost, prizes = get_spin_config()
+        em = dark_red_embed("🎰 Spin Wheel Config", f"**Harga sekali putar:** {cost} 🪙\n\n**Peluang Hadiah:**\n{spin_chance_lines(prizes)}")
+        await interaction.response.send_message(embed=em, ephemeral=True)
+
+    @discord.ui.button(label="🔄 Reset ke Default", style=discord.ButtonStyle.danger, row=1)
+    async def reset_default(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if interaction.user.id != OWNER_ID:
+            await interaction.response.send_message("❌ Hanya Owner Bot yang bisa mengatur spin wheel!", ephemeral=True)
+            return
+        save_spin_config(DEFAULT_SPIN_COST, DEFAULT_SPIN_PRIZES)
+        await interaction.response.send_message("✅ Spin wheel config direset ke default!", ephemeral=True)
+
+async def spinwheel_setup_panel(ctx):
+    cost, prizes = get_spin_config()
+    em = dark_red_embed(
+        "🎰 Setup Spin Wheel",
+        f"**Harga sekali putar:** {cost} 🪙\n"
+        f"**Jumlah hadiah terdaftar:** {len(prizes)}\n\n"
+        "Gunakan tombol di bawah buat atur hadiah (termasuk rod custom) & harganya.\n"
+        "**Weight** = bobot peluang. Semakin kecil weight-nya dibanding total, semakin langka hadiah itu keluar.\n"
+        "Rod sengaja dibuat weight kecil biar susah didapat."
+    )
+    em.set_footer(text="⚠️ Panel ini hanya untuk Owner/Admin")
+    await ctx.send(embed=em, view=SpinSetupView())
 
 # ===================== PREMIUM ORDER VIEWS =====================
 
@@ -2712,6 +2990,12 @@ async def fishing_cmd(ctx):
     if await check_maintenance(ctx): return
     if await check_premium_gate(ctx, "fish"): return
     await ctx.reply(view=FishingMainView(ctx.author.id, body_text=f"Hey **{ctx.author.display_name}**! Choose your action:"))
+
+@bot.command(name="spin", aliases=["roda", "putar", "spinwheel"])
+async def spin_cmd(ctx):
+    if await check_maintenance(ctx): return
+    if await check_premium_gate(ctx, "spin"): return
+    await ctx.reply(view=SpinWheelView(ctx.author.id, body_text=f"Hey **{ctx.author.display_name}**! Pencet tombol di bawah buat coba keberuntungan lo!"))
 
 @bot.command(name="tebak", aliases=["riddle", "tebakan"])
 async def tebak_cmd(ctx):
@@ -3636,6 +3920,7 @@ async def help_cmd(ctx):
         return
     fields = [
         ("🎣 Fishing", f"`fish` `coins` `daily` `quest` {emoji('coin')}"),
+        ("🎰 Spin Wheel", "`spin` / `/spin` — Putar pake koin, siapa tau dapet rod langka!"),
         ("🧠 Tebak-Tebakan", "`tebak` `addtebak` `listtebak` `removetebak` | `/tebak` (Arena) `/tambahsoal`"),
         ("⚠️ Mod", "`warn` `warns` `kick` `ban` `timeout` `move` `clear`"),
         ("👤 Info", "`avatar` `userinfo` `ping`"),
@@ -3672,6 +3957,15 @@ async def slash_fish(interaction: discord.Interaction):
         return
     if await check_premium_gate_slash(interaction, "fish"): return
     await interaction.response.send_message(view=FishingMainView(interaction.user.id, body_text=f"Hey **{interaction.user.display_name}**! Choose your action:"))
+
+@tree.command(name="spin", description="Putar spin wheel pake koin, siapa tau dapet rod langka!")
+async def slash_spin(interaction: discord.Interaction):
+    maint = get_maintenance()
+    if maint.get("active") and interaction.user.id != OWNER_ID:
+        await interaction.response.send_message(view=panel("🔧 Maintenance", f"Bot sedang maintenance.\n**Alasan:** {maint.get('reason','')}", color=0xFF6600), ephemeral=True)
+        return
+    if await check_premium_gate_slash(interaction, "spin"): return
+    await interaction.response.send_message(view=SpinWheelView(interaction.user.id, body_text=f"Hey **{interaction.user.display_name}**! Pencet tombol di bawah buat coba keberuntungan lo!"))
 
 
 @tree.command(name="reactionrole", description="Setup reaction role dengan button")
