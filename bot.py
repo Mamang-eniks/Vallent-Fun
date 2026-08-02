@@ -125,13 +125,28 @@ def get_rarity_from_luck(luck: float) -> str:
     else:
         return "common"
 
-RARITY_DISPLAY = {
-    "legendary": ("⭐ LEGENDARY", 0xFFD700),
-    "rare":      ("💎 Rare",      0x9B59B6),
-    "uncommon":  ("🔵 Uncommon",  0x3498DB),
-    "common":    ("⚪ Common",    DARK_RED),
-    "trash":     ("💩 Trash",     0x95A5A6),
+RARITY_LABELS = {
+    "legendary": "LEGENDARY",
+    "rare":      "Rare",
+    "uncommon":  "Uncommon",
+    "common":    "Common",
+    "trash":     "Trash",
 }
+RARITY_COLORS = {
+    "legendary": 0xFFD700,
+    "rare":      0x9B59B6,
+    "uncommon":  0x3498DB,
+    "common":    DARK_RED,
+    "trash":     0x95A5A6,
+}
+
+def get_rarity_display(rarity: str):
+    """Bangun (label, color) buat 1 rarity. Emoji-nya diambil dari emoji_config
+    (bisa diatur owner lewat `!Doom setemoji`), bukan hardcoded, biar
+    `setemoji legendary/rare/uncommon/common/trash` beneran ngefek."""
+    label = RARITY_LABELS.get(rarity, "Common")
+    color = RARITY_COLORS.get(rarity, DARK_RED)
+    return f"{emoji(rarity)} {label}", color
 
 def get_fishing_config():
     """Load fishing config (ikan, rod, bait) dari JSON, fallback ke default.
@@ -585,7 +600,7 @@ def spin_prize_label(p: dict) -> str:
         return f"🪙 Koin **{p.get('min')}-{p.get('max')}**"
     if t_ == "bait":
         return f"🪱 Umpan **{p.get('name')} x{p.get('qty')}**"
-    return f"💩 {p.get('label', 'Zonk')}"
+    return f"{emoji('trash')} {p.get('label', 'Zonk')}"
 
 def spin_chance_lines(prizes: list) -> str:
     total = sum(max(p.get("weight", 0), 0) for p in prizes) or 1
@@ -624,7 +639,7 @@ def apply_spin_prize(uid: str, prize: dict) -> str:
         return f"🪱 Lo dapet **{bait_name} x{qty}**! Langsung masuk inventori umpan lo."
     else:
         label = prize.get("label", "Zonk")
-        return f"💩 Yah, **{label}**! Gak dapet apa-apa kali ini. Coba lagi bestie!"
+        return f"{emoji('trash')} Yah, **{label}**! Gak dapet apa-apa kali ini. Coba lagi bestie!"
 
 
 # ===================== TEKS BOT (id_gaul, fixed) =====================
@@ -1633,10 +1648,10 @@ class FishingMainView(discord.ui.LayoutView):
     def _build(self):
         self.clear_items()
         container = discord.ui.Container(accent_colour=DARK_RED)
-        container.add_item(discord.ui.TextDisplay(f"### 🎣 StartDoom Fishing\n{self.body_text}"))
+        container.add_item(discord.ui.TextDisplay(f"### {emoji('fish')} StartDoom Fishing\n{self.body_text}"))
         container.add_item(discord.ui.Separator())
 
-        fish_btn = discord.ui.Button(label="Mancing", emoji="🎣", style=discord.ButtonStyle.danger)
+        fish_btn = discord.ui.Button(label="Mancing", emoji=emoji('fish'), style=discord.ButtonStyle.danger)
         inv_btn  = discord.ui.Button(label="Inventori", emoji="🎒", style=discord.ButtonStyle.secondary)
         shop_btn = discord.ui.Button(label="Shop", emoji="🏪", style=discord.ButtonStyle.primary)
         fish_btn.callback = self.fish
@@ -1696,7 +1711,7 @@ class FishingMainView(discord.ui.LayoutView):
         udata["inventory"].append(caught["name"])
         save_user_fishing(uid, udata)
 
-        rarity_label, _ = RARITY_DISPLAY.get(rarity, ("⚪ Common", DARK_RED))
+        rarity_label, _ = get_rarity_display(rarity)
         luck_pct = caught.get("luck", 0)
         uid_fish = interaction.user.id
 
@@ -4615,7 +4630,7 @@ async def vote_cmd(ctx):
     uid        = ctx.author.id
     bot_id_str = BOT_ID or str(bot.user.id)
     vote_url   = f"https://top.gg/bot/{bot_id_str}/vote"
-    vote_btn   = discord.ui.Button(label="Vote di Top.gg", emoji="🗳️", style=discord.ButtonStyle.link, url=vote_url)
+    vote_btn   = discord.ui.Button(label="Vote di Top.gg", emoji=emoji('vote'), style=discord.ButtonStyle.link, url=vote_url)
     await ctx.reply(view=panel(
         t("vote_title", uid),
         t("vote_desc", uid,
