@@ -134,11 +134,14 @@ RARITY_DISPLAY = {
 }
 
 def get_fishing_config():
-    """Load fishing config (ikan, rod, bait) dari JSON, fallback ke default."""
+    """Load fishing config (ikan, rod, bait) dari JSON, fallback ke default.
+    Pakai `or` (bukan cuma .get) supaya kalau value-nya ADA tapi kosong ([]/None),
+    tetap fallback ke default — mencegah Select dropdown dikirim tanpa option
+    (yang bikin Discord tolak dengan error 'Must be between 1 and 25 in length')."""
     cfg = load_json("fishing_config.json", {})
-    fishes = cfg.get("fishes", DEFAULT_FISHES)
-    rods   = cfg.get("rods",   DEFAULT_RODS)
-    baits  = cfg.get("baits",  DEFAULT_BAITS)
+    fishes = cfg.get("fishes") or DEFAULT_FISHES
+    rods   = cfg.get("rods")   or DEFAULT_RODS
+    baits  = cfg.get("baits")  or DEFAULT_BAITS
     return fishes, rods, baits
 
 def save_fishing_config(fishes, rods, baits):
@@ -1791,21 +1794,32 @@ class ShopBuyView(discord.ui.LayoutView):
         rod_text  = "\n".join([f"{r['emoji']} **{r['name']}** - {r['price']} 🪙 (Tier {r['tier']}, +{r['luck_bonus']}% luck)" for r in rods])
         bait_text = "\n".join([f"{b['emoji']} **{b['name']}** - {b['price']} 🪙 (+{b['luck_bonus']}% luck)" for b in baits])
 
-        rod_options  = [discord.SelectOption(label=r["name"], description=f"Tier {r['tier']} - {r['price']} koin | +{r['luck_bonus']}% luck", emoji=r["emoji"]) for r in rods]
-        bait_options = [discord.SelectOption(label=b["name"], description=f"{b['price']} koin | +{b['luck_bonus']}% luck", emoji=b["emoji"]) for b in baits]
-        rod_select  = discord.ui.Select(placeholder="Beli Rod...",   custom_id="buy_rod",  options=rod_options)
-        bait_select = discord.ui.Select(placeholder="Beli Umpan...", custom_id="buy_bait", options=bait_options)
-        rod_select.callback  = self.buy_rod
-        bait_select.callback = self.buy_bait
-
         container = discord.ui.Container(accent_colour=DARK_RED)
         container.add_item(discord.ui.TextDisplay(
             f"### 🏪 Fishing Shop\n**Koin lo:** {udata['coins']} 🪙\n\n"
             f"**🎣 Rod:**\n{rod_text}\n\n**🪱 Umpan:**\n{bait_text}"
         ))
         container.add_item(discord.ui.Separator())
-        container.add_item(discord.ui.ActionRow(rod_select))
-        container.add_item(discord.ui.ActionRow(bait_select))
+
+        # Safety guard: Discord menolak Select tanpa option sama sekali (error 400
+        # "Must be between 1 and 25 in length"). Kalau rods/baits somehow kosong,
+        # skip dropdown-nya daripada bikin panel gagal total.
+        if rods:
+            rod_options = [discord.SelectOption(label=r["name"], description=f"Tier {r['tier']} - {r['price']} koin | +{r['luck_bonus']}% luck", emoji=r["emoji"]) for r in rods[:25]]
+            rod_select  = discord.ui.Select(placeholder="Beli Rod...", custom_id="buy_rod", options=rod_options)
+            rod_select.callback = self.buy_rod
+            container.add_item(discord.ui.ActionRow(rod_select))
+        else:
+            container.add_item(discord.ui.TextDisplay("⚠️ Belum ada rod yang terdaftar."))
+
+        if baits:
+            bait_options = [discord.SelectOption(label=b["name"], description=f"{b['price']} koin | +{b['luck_bonus']}% luck", emoji=b["emoji"]) for b in baits[:25]]
+            bait_select  = discord.ui.Select(placeholder="Beli Umpan...", custom_id="buy_bait", options=bait_options)
+            bait_select.callback = self.buy_bait
+            container.add_item(discord.ui.ActionRow(bait_select))
+        else:
+            container.add_item(discord.ui.TextDisplay("⚠️ Belum ada umpan yang terdaftar."))
+
         self.add_item(container)
 
     async def buy_rod(self, interaction: discord.Interaction):
@@ -1966,10 +1980,10 @@ class FishingSetupView(discord.ui.View):
 
     @discord.ui.button(label="🔄 Reset ke Default", style=discord.ButtonStyle.danger, row=1)
     async def reset_default(self, interaction: discord.Interaction, button: discord.ui.Button):
-        save_fishing_config(DEFAULT_FISHES, DEFAULT_RODS, DEFAULT_BAITS)
         if interaction.user.id != OWNER_ID:
             await interaction.response.send_message("❌ Hanya Owner Bot yang bisa mengatur fishing!", ephemeral=True)
             return
+        save_fishing_config(DEFAULT_FISHES, DEFAULT_RODS, DEFAULT_BAITS)
         await interaction.response.send_message("✅ Fishing config direset ke default!", ephemeral=True)
 
 async def fishing_setup_panel(ctx):
