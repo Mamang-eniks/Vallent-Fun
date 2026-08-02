@@ -2096,9 +2096,12 @@ class InventoryView(discord.ui.LayoutView):
             sell_all_btn.callback = self.sell_all
             row.add_item(sell_all_btn)
             container.add_item(row)
+            # Select HARUS dibungkus ActionRow, gak boleh nempel langsung ke
+            # Container/View Components V2 (Discord nolak dengan error 400
+            # "components.X: type must be one of (1,9,10,12,13,14,17)").
+            sell_select_row = discord.ui.ActionRow(SellFishSelect(self.user_id, inv_count))
+            container.add_item(sell_select_row)
         self.add_item(container)
-        if inv_count:
-            self.add_item(SellFishSelect(self.user_id, inv_count))
 
     async def sell_all(self, interaction: discord.Interaction):
         if interaction.user.id != self.user_id:
