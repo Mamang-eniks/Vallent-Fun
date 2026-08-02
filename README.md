@@ -1,6 +1,6 @@
 # 🔥 RepublikDooms Discord Bot
 
-Bot Discord gaul lengkap buat server lo! Semua fitur ada, dari AI chat sampai fishing game.
+Bot Discord gaul lengkap buat server lo! Fishing game, moderation, quest, daily login, sampai sistem premium QRIS — semua ada.
 
 ---
 
@@ -17,14 +17,16 @@ Buat file `.env` atau set langsung di terminal:
 **Windows:**
 ```cmd
 set DISCORD_TOKEN=TOKEN_BOT_DISCORD_LO
-set ANTHROPIC_API_KEY=API_KEY_ANTHROPIC_LO
+set OWNER_ID=USER_ID_DISCORD_LO
 ```
 
 **Linux/Mac:**
 ```bash
 export DISCORD_TOKEN="TOKEN_BOT_DISCORD_LO"
-export ANTHROPIC_API_KEY="API_KEY_ANTHROPIC_LO"
+export OWNER_ID="USER_ID_DISCORD_LO"
 ```
+
+> `OWNER_ID` wajib diisi — dipakai buat fitur owner-only kayak `noprefix`, `setemoji`, panel premium, dan panel maintenance.
 
 ### 3. Jalankan Bot
 ```bash
@@ -45,10 +47,9 @@ python bot.py
    - ✅ Server Members Intent
    - ✅ Message Content Intent
 
-### Anthropic API Key (buat fitur AI):
-1. Daftar/login di https://console.anthropic.com
-2. Pergi ke **API Keys** → **Create Key**
-3. Copy key-nya
+### Owner ID:
+1. Aktifkan **Developer Mode** di Discord (Settings → Advanced)
+2. Klik kanan nama lo → **Copy User ID**
 
 ### Invite Bot ke Server:
 1. Di Discord Developer Portal, pergi ke **OAuth2 > URL Generator**
@@ -87,7 +88,7 @@ Type=simple
 User=YOUR_USER
 WorkingDirectory=/path/to/RepublikDooms
 Environment=DISCORD_TOKEN=token_lo
-Environment=ANTHROPIC_API_KEY=api_key_lo
+Environment=OWNER_ID=owner_id_lo
 ExecStart=/usr/bin/python3 bot.py
 Restart=always
 
@@ -103,53 +104,75 @@ sudo systemctl start dooms
 
 ## 📋 Daftar Command Lengkap
 
-### Prefix: `!Doom`
+### Prefix: `!Doom` (juga bisa `!Kingdoom`)
 
-| Command | Deskripsi |
-|---------|-----------|
-| `!Doom ai [pertanyaan]` | Tanya AI |
-| `!Doom fish` | Mulai mancing |
-| `!Doom coins` | Cek koin |
-| `!Doom tebak` | Main tebak-tebakan |
-| `!Doom warn @user [alasan]` | Warn member |
-| `!Doom warns @user` | Cek warns member |
-| `!Doom kick @user [alasan]` | Kick member |
-| `!Doom ban @user [alasan]` | Ban member |
-| `!Doom timeout @user [menit]` | Timeout member |
-| `!Doom move @user #channel` | Pindah member ke VC |
-| `!Doom addrole @user @role` | Tambah role |
-| `!Doom removerole @user @role` | Copot role |
-| `!Doom avatar [@user]` | Lihat avatar |
-| `!Doom userinfo [@user]` | Info user |
-| `!Doom clear [jumlah]` | Hapus pesan |
-| `!Doom embed Judul\|Deskripsi` | Kirim embed |
-| `!Doom ar add/remove/list` | Auto response |
-| `!Doom sticky set/remove` | Sticky message |
-| `!Doom giveaway [durasi] [hadiah]` | Mulai giveaway |
-| `!Doom event Nama\|Deskripsi\|Jam` | Event message |
-| `!Doom addemoji` | Tambah emoji |
-| `!Doom help` | Tampilkan help |
+| Command | Alias | Deskripsi |
+|---------|-------|-----------|
+| `!Doom fish` | `mancing`, `fishing` | Mulai mancing |
+| `!Doom coins` | `koin`, `saldo` | Cek koin |
+| `!Doom daily` | `login`, `harian`, `claim` | Klaim koin harian (streak makin gede bonusnya) |
+| `!Doom quest` | `quests`, `misi` | Cek progress quest mancing |
+| `!Doom tebak` | `riddle`, `tebakan` | Main tebak-tebakan |
+| `!Doom addtebak` | `addriddle`, `tambahtebak` | Tambah soal tebakan custom |
+| `!Doom listtebak` | `listriddle`, `tebaklist` | List soal tebakan custom |
+| `!Doom removetebak` | `deltebak`, `hapustebak` | Hapus soal tebakan custom |
+| `!Doom warn @user [alasan]` | `peringatan` | Warn member |
+| `!Doom warns @user` | `warnlist`, `cekwarn` | Cek warns member |
+| `!Doom kick @user [alasan]` | `tendang` | Kick member |
+| `!Doom ban @user [alasan]` | `banned` | Ban member |
+| `!Doom timeout @user [menit]` | `mute` | Timeout member |
+| `!Doom move @user #channel` | `pindah`, `vcmove` | Pindah member ke VC |
+| `!Doom addrole @user @role` | `arole`, `giverole` | Tambah role |
+| `!Doom removerole @user @role` | `rrole`, `delrole` | Copot role |
+| `!Doom avatar [@user]` | `av` | Lihat avatar |
+| `!Doom userinfo [@user]` | `ui`, `whois` | Info user |
+| `!Doom clear [jumlah]` | `purge` | Hapus pesan |
+| `!Doom embed Judul\|Deskripsi` | `em` | Kirim embed |
+| `!Doom setmainchannel #channel` | `mainchannel`, `setmc` | Set channel utama |
+| `!Doom autoresponse add/remove/list` | `ar` | Auto response |
+| `!Doom sticky set/remove` | `stickymsg` | Sticky message |
+| `!Doom giveaway [durasi] [hadiah]` | `ga` | Mulai giveaway |
+| `!Doom event Nama\|Deskripsi\|Jam` | `announce`, `pengumuman` | Event message |
+| `!Doom addemoji` | `ae`, `addemote` | Tambah custom emoji ke server (dari emoji di pesan) |
+| `!Doom premium` | `prem`, `vip` | Info & order premium (QRIS) |
+| `!Doom vote` | `upvote` | Link vote Top.gg |
+| `!Doom claimvote` | `voteclaim` | Klaim reward vote |
+| `!Doom help` | `h` | Tampilkan help |
+
+### 👑 Owner Only
+
+| Command | Alias | Deskripsi |
+|---------|-------|-----------|
+| `!Doom noprefix add/remove/list @user` | `np` | Kasih/cabut akses command tanpa prefix ke user lain |
+| `!Doom setemoji <key> <emoji>` | `emojiset`, `seteemoji` | Ganti emoji default bot pakai emoji custom server. Ketik `!Doom setemoji list` buat lihat semua key |
+| `!Doom setmaintenancechannel #channel` | `setmaintchannel`, `maintchannel` | Channel notifikasi maintenance |
+
+**Cara kerja No-Prefix:** Owner bot otomatis punya akses ini. Kalau owner kasih akses ke user lain lewat `noprefix add @user`, user itu bisa ketik nama command langsung (misal `fish`, `daily`, `coins`) tanpa perlu ketik `!Doom` di depannya.
+
+**Cara kerja Emoji Server:** Semua emoji "sistem" bot (koin, quest, daily, status sukses/gagal, dll) bisa diganti ke emoji custom server lewat `setemoji`. Contoh: `!Doom setemoji coin <:coingw:123456789012345678>`. Ketik `!Doom setemoji list` untuk lihat semua key yang bisa diatur (`coin`, `fish`, `success`, `fail`, `legendary`, `rare`, `uncommon`, `common`, `trash`, `quest`, `daily`, `vote`, `streak`). Emoji ikan/rod/bait di sistem fishing sendiri sudah bisa diatur bebas lewat `!Kingdoom setfishing`.
 
 ### Slash Commands `/`
 
 | Command | Deskripsi |
 |---------|-----------|
-| `/ai` | AI chat |
 | `/fish` | Fishing game |
-| `/ticket` | Setup panel ticket |
-| `/leveling` | Setup leveling |
+| `/daily` | Klaim koin harian |
+| `/quest` | Cek progress quest mancing |
+| `/tebak` | Buka Arena Tebak-Tebakan |
+| `/tambahsoal` | Tambah soal Arena Tebak yang aktif |
+| `/addtebak` | Tambah soal tebakan custom |
 | `/reactionrole` | Setup reaction role |
 | `/giveaway` | Buat giveaway |
-| `/warn` `/kick` `/ban` | Moderasi |
-| `/timeout` `/clear` | Moderasi |
+| `/warn` `/kick` `/ban` `/timeout` `/clear` | Moderasi |
 | `/avatar` `/userinfo` | Info member |
 | `/addrole` `/removerole` | Manage role |
-| `/embed` `/sticky` | Utility |
-| `/autoresponse` | Auto response |
-| `/event` | Event message |
-| `/tebak` | Tebak-tebakan |
+| `/embed` `/sticky` `/autoresponse` | Utility |
+| `/event` | Event message dengan auto-timer |
 | `/coins` | Cek koin |
-| `/leaderboard` | Top level |
+| `/leaderboard` | Leaderboard koin terbanyak |
+| `/noprefix` | *(Owner)* Atur akses no-prefix |
+| `/setemoji` | *(Owner)* Atur emoji custom server |
+| `/setmaintenancechannel` | *(Admin)* Channel notifikasi maintenance |
 
 ---
 
@@ -183,17 +206,44 @@ sudo systemctl start dooms
 > ⏰ Cooldown mancing: **10 detik**
 > 🔒 Inventori bersifat privat, hanya bisa dilihat sendiri
 
+### 🎯 Quest Mancing
+Reward otomatis masuk begitu total tangkapan lo nyampe target — gak perlu klaim manual:
+
+| Quest | Target | Reward |
+|-------|--------|--------|
+| 🎣 Pemula Mancing | 5 ikan | 100 koin |
+| 🐟 Mancing Rajin | 15 ikan | 250 koin + Pancing Kayu gratis |
+| 🦈 Mancing Handal | 30 ikan | 500 koin + Pancing Besi gratis |
+| 🔱 Master Pemancing | 60 ikan | 1000 koin + Pancing Karbon gratis |
+| 🐉 Legenda Mancing | 100 ikan | 2500 koin + Pancing Titan gratis |
+
+### 🎁 Daily Login
+- `!Doom daily` klaim koin tiap 24 jam (100–250 koin base)
+- Streak berturut-turut nambah bonus (+15 koin/hari, cap 300 koin)
+- Kalau lewat 48 jam gak klaim, streak reset ke 1
+
 ---
 
-## 📁 File Data (auto-generate)
-- `data/fishing.json` - Data fishing & koin user
-- `data/levels.json` - Data level user
-- `data/warns.json` - Data warn
-- `data/config.json` - Konfigurasi server
-- `data/autoresponse.json` - Auto response
-- `data/sticky.json` - Sticky messages
-- `data/giveaways.json` - Data giveaway
-- `data/tickets.json` - Data ticket
+## 📁 File Data (auto-generate di folder `data/`)
+- `fishing.json` — Data fishing, koin, quest progress user
+- `fishing_config.json` — Konfigurasi ikan/rod/umpan custom
+- `daily.json` — Data streak & klaim daily login
+- `noprefix.json` — Daftar user dengan akses no-prefix
+- `emoji_config.json` — Emoji custom server yang sudah diset owner
+- `warns.json` — Data warn
+- `config.json` — Konfigurasi server
+- `autoresponse.json` — Auto response
+- `sticky.json` — Sticky messages
+- `giveaways.json` — Data giveaway
+- `custom_tebakan.json` — Soal tebak-tebakan custom
+- `premium.json` / `premium_orders.json` — Data & order premium
+- `maintenance.json` — Status maintenance bot
+- `vote.json` — Data vote Top.gg
+
+---
+
+## 🗑️ Fitur yang Sudah Dihapus
+Ticket system, leveling/XP, dan ganti bahasa (`setlang`) sudah dihapus dari bot ini. Bot sekarang fixed pakai Bahasa Indonesia gaul untuk semua user.
 
 ---
 
