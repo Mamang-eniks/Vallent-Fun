@@ -37,7 +37,7 @@ except ImportError:
 WIB = zoneinfo.ZoneInfo("Asia/Jakarta")
 
 # ===================== CONFIG =====================
-PREFIX = "!Doom"
+PREFIX = "d"
 BOT_TOKEN = os.getenv("DISCORD_TOKEN", "YOUR_BOT_TOKEN_HERE")
 OWNER_ID = int(os.getenv("OWNER_ID", "0"))
 DARK_RED = 0x8B0000
@@ -78,7 +78,7 @@ def save_json(filename, data):
 intents = discord.Intents.all()
 
 def get_prefix(bot, message):
-    return ["!Doom ", "!Kingdoom ", "!doom ", "!kingdoom "]
+    return ["d", "D", "!Kingdoom ", "!kingdoom "]
 
 bot = commands.Bot(command_prefix=get_prefix, intents=intents, help_command=None, case_insensitive=True)
 tree = bot.tree
@@ -147,7 +147,7 @@ RARITY_COLORS = {
 
 def get_rarity_display(rarity: str):
     """Bangun (label, color) buat 1 rarity. Emoji-nya diambil dari emoji_config
-    (bisa diatur owner lewat `!Doom setemoji`), bukan hardcoded, biar
+    (bisa diatur owner lewat `dsetemoji`), bukan hardcoded, biar
     `setemoji legendary/rare/uncommon/common/trash` beneran ngefek."""
     label = RARITY_LABELS.get(rarity, "Common")
     color = RARITY_COLORS.get(rarity, DARK_RED)
@@ -347,8 +347,8 @@ def panel(title: str = "", description: str = "", **kwargs) -> StartDoomPanel:
 
 # ===================== NO-PREFIX SYSTEM (Owner Only Grant) =====================
 # Owner bot bisa kasih akses "no prefix" ke user tertentu, jadi mereka bisa
-# ketik command langsung tanpa "!Doom " di depannya (misal: "fish" alih-alih
-# "!Doom fish"). Owner bot sendiri OTOMATIS punya akses ini.
+# ketik command langsung tanpa "d" di depannya (misal: "fish" alih-alih
+# "dfish"). Owner bot sendiri OTOMATIS punya akses ini.
 
 def get_noprefix_users() -> list:
     return load_json("noprefix.json", {"users": []}).get("users", [])
@@ -427,7 +427,7 @@ def perform_daily_claim(uid: str) -> dict:
 # ===================== QUEST SYSTEM (Mancing + Vote) =====================
 # Quest dicek dari progress asli user (total tangkapan / status vote), BUKAN
 # auto-reward. Begitu target kecapai, quest berstatus "siap diklaim" dan user
-# harus pencet tombol Claim di panel "!Doom quest" buat narik reward-nya —
+# harus pencet tombol Claim di panel "dquest" buat narik reward-nya —
 # persis kaya sistem quest log Nocturne Assistant.
 QUEST_LIST = [
     {"id": "quest_5",    "type": "fish", "target": 5,   "label": "🎣 Pemula Mancing",    "reward_coins": 100,  "reward_rod": None},
@@ -884,7 +884,7 @@ async def send_checklist_panel(sender, user: discord.abc.User, tab: str = "daily
 
 # ===================== EMOJI SERVER SYSTEM =====================
 # Owner bot bisa ganti emoji unicode bawaan bot dengan emoji custom server
-# lewat command "!Doom setemoji <key> <emoji>". Kalau belum diset, bot pakai
+# lewat command "dsetemoji <key> <emoji>". Kalau belum diset, bot pakai
 # emoji unicode default.
 DEFAULT_EMOJIS = {
     "coin":      "🪙",
@@ -1066,13 +1066,13 @@ TRANSLATIONS: dict = {
         "ja":      "👑 このコマンドはプレミアム限定です！",
     },
     "premium_locked_desc": {
-        "id_gaul": "Command ini **terkunci** dan hanya bisa digunakan oleh member **Premium** bro!\n\n**📦 Paket Tersedia:**\n{packages}\n\n**💳 Info Pembayaran:**\n```{payment}```\n\nKetik `!Doom premium` untuk order sekarang!\n✨ Upgrade dan nikmatin semua fitur eksklusif!",
-        "id":       "Command ini **terkunci** dan hanya bisa digunakan oleh member **Premium** bro!\n\n**📦 Paket Tersedia:**\n{packages}\n\n**💳 Info Pembayaran:**\n```{payment}```\n\nKetik `!Doom premium` untuk order sekarang!\n✨ Upgrade dan nikmatin semua fitur eksklusif!",
-        "en":      "This command is **locked** and only available to **Premium** members!\n\n**📦 Available Packages:**\n{packages}\n\n**💳 Payment Info:**\n```{payment}```\n\nType `!Doom premium` to order now!\n✨ Upgrade and enjoy all exclusive features!",
-        "de":      "Dieser Befehl ist **gesperrt** und nur für **Premium**-Mitglieder verfügbar!\n\n**📦 Verfügbare Pakete:**\n{packages}\n\n**💳 Zahlungsinfo:**\n```{payment}```\n\nTippe `!Doom premium` um jetzt zu bestellen!\n✨ Upgrade und genieße alle exklusiven Funktionen!",
-        "ar":      "هذا الأمر **مقفل** ومتاح فقط للأعضاء **المميزين**!\n\n**📦 الباقات المتاحة:**\n{packages}\n\n**💳 معلومات الدفع:**\n```{payment}```\n\nاكتب `!Doom premium` للطلب الآن!\n✨ قم بالترقية واستمتع بجميع الميزات الحصرية!",
-        "th":      "คำสั่งนี้**ถูกล็อค**และใช้ได้เฉพาะสมาชิก**พรีเมียม**เท่านั้น!\n\n**📦 แพ็คเกจที่มี:**\n{packages}\n\n**💳 ข้อมูลการชำระเงิน:**\n```{payment}```\n\nพิมพ์ `!Doom premium` เพื่อสั่งซื้อตอนนี้!\n✨ อัปเกรดและเพลิดเพลินกับฟีเจอร์พิเศษทั้งหมด!",
-        "ja":      "このコマンドは**ロック**されており、**プレミアム**メンバーのみ利用可能です！\n\n**📦 利用可能なパッケージ:**\n{packages}\n\n**💳 支払い情報:**\n```{payment}```\n\n`!Doom premium` と入力して今すぐ注文！\n✨ アップグレードして限定機能をお楽しみください！",
+        "id_gaul": "Command ini **terkunci** dan hanya bisa digunakan oleh member **Premium** bro!\n\n**📦 Paket Tersedia:**\n{packages}\n\n**💳 Info Pembayaran:**\n```{payment}```\n\nKetik `dpremium` untuk order sekarang!\n✨ Upgrade dan nikmatin semua fitur eksklusif!",
+        "id":       "Command ini **terkunci** dan hanya bisa digunakan oleh member **Premium** bro!\n\n**📦 Paket Tersedia:**\n{packages}\n\n**💳 Info Pembayaran:**\n```{payment}```\n\nKetik `dpremium` untuk order sekarang!\n✨ Upgrade dan nikmatin semua fitur eksklusif!",
+        "en":      "This command is **locked** and only available to **Premium** members!\n\n**📦 Available Packages:**\n{packages}\n\n**💳 Payment Info:**\n```{payment}```\n\nType `dpremium` to order now!\n✨ Upgrade and enjoy all exclusive features!",
+        "de":      "Dieser Befehl ist **gesperrt** und nur für **Premium**-Mitglieder verfügbar!\n\n**📦 Verfügbare Pakete:**\n{packages}\n\n**💳 Zahlungsinfo:**\n```{payment}```\n\nTippe `dpremium` um jetzt zu bestellen!\n✨ Upgrade und genieße alle exklusiven Funktionen!",
+        "ar":      "هذا الأمر **مقفل** ومتاح فقط للأعضاء **المميزين**!\n\n**📦 الباقات المتاحة:**\n{packages}\n\n**💳 معلومات الدفع:**\n```{payment}```\n\nاكتب `dpremium` للطلب الآن!\n✨ قم بالترقية واستمتع بجميع الميزات الحصرية!",
+        "th":      "คำสั่งนี้**ถูกล็อค**และใช้ได้เฉพาะสมาชิก**พรีเมียม**เท่านั้น!\n\n**📦 แพ็คเกจที่มี:**\n{packages}\n\n**💳 ข้อมูลการชำระเงิน:**\n```{payment}```\n\nพิมพ์ `dpremium` เพื่อสั่งซื้อตอนนี้!\n✨ อัปเกรดและเพลิดเพลินกับฟีเจอร์พิเศษทั้งหมด!",
+        "ja":      "このコマンドは**ロック**されており、**プレミアム**メンバーのみ利用可能です！\n\n**📦 利用可能なパッケージ:**\n{packages}\n\n**💳 支払い情報:**\n```{payment}```\n\n`dpremium` と入力して今すぐ注文！\n✨ アップグレードして限定機能をお楽しみください！",
     },
     # ── FISHING ──────────────────────────────────────────────
     "fish_title_rare": {
@@ -1232,13 +1232,13 @@ TRANSLATIONS: dict = {
         "ja":      "🗳️ Top.gg でボットに投票！",
     },
     "vote_desc": {
-        "id_gaul": "**Support bot ini dengan vote di Top.gg!** 🔥\n\n🔗 **[Klik di sini untuk Vote]({url})**\n\n**🎁 Reward Vote:**\n• **{min} - {max} koin** langsung ke saldo lo!\n• **+{pct}% bonus coin mancing** selama **{mins} menit**!\n\n**⏰ Cooldown Claim:** {cd} jam\n\nSetelah vote, ketik `!Doom claimvote` untuk ambil reward! 🚀",
-        "id":       "**Support bot ini dengan vote di Top.gg!** 🔥\n\n🔗 **[Klik di sini untuk Vote]({url})**\n\n**🎁 Reward Vote:**\n• **{min} - {max} koin** langsung ke saldo lo!\n• **+{pct}% bonus coin mancing** selama **{mins} menit**!\n\n**⏰ Cooldown Claim:** {cd} jam\n\nSetelah vote, ketik `!Doom claimvote` untuk ambil reward! 🚀",
-        "en":      "**Support this bot by voting on Top.gg!** 🔥\n\n🔗 **[Click here to Vote]({url})**\n\n**🎁 Vote Rewards:**\n• **{min} - {max} coins** directly to your balance!\n• **+{pct}% fishing coin bonus** for **{mins} minutes**!\n\n**⏰ Claim Cooldown:** {cd} hours\n\nAfter voting, type `!Doom claimvote` to claim your reward! 🚀",
-        "de":      "**Unterstütze diesen Bot durch Abstimmen auf Top.gg!** 🔥\n\n🔗 **[Hier klicken zum Abstimmen]({url})**\n\n**🎁 Abstimmungsbelohnungen:**\n• **{min} - {max} Münzen** direkt auf dein Konto!\n• **+{pct}% Angel-Münzen-Bonus** für **{mins} Minuten**!\n\n**⏰ Claim-Abklingzeit:** {cd} Stunden\n\nNach dem Abstimmen tippe `!Doom claimvote` um deine Belohnung zu erhalten! 🚀",
-        "ar":      "**ادعم هذا البوت بالتصويت على Top.gg!** 🔥\n\n🔗 **[انقر هنا للتصويت]({url})**\n\n**🎁 مكافآت التصويت:**\n• **{min} - {max} عملة** مباشرة إلى رصيدك!\n• **+{pct}% مكافأة عملة الصيد** لمدة **{mins} دقيقة**!\n\n**⏰ مهلة المطالبة:** {cd} ساعات\n\nبعد التصويت، اكتب `!Doom claimvote` للمطالبة بمكافأتك! 🚀",
-        "th":      "**สนับสนุนบอทนี้ด้วยการโหวตบน Top.gg!** 🔥\n\n🔗 **[คลิกที่นี่เพื่อโหวต]({url})**\n\n**🎁 รางวัลโหวต:**\n• **{min} - {max} เหรียญ** ตรงไปยังยอดเงินของคุณ!\n• **+{pct}% โบนัสเหรียญตกปลา** เป็นเวลา **{mins} นาที**!\n\n**⏰ คูลดาวน์การเคลม:** {cd} ชั่วโมง\n\nหลังจากโหวต พิมพ์ `!Doom claimvote` เพื่อรับรางวัล! 🚀",
-        "ja":      "**Top.gg でボットに投票してサポートしよう！** 🔥\n\n🔗 **[こちらをクリックして投票]({url})**\n\n**🎁 投票報酬:**\n• **{min} - {max} コイン** が即座に残高へ！\n• **+{pct}% 釣りコインボーナス** が **{mins} 分間** 有効！\n\n**⏰ クレームクールダウン:** {cd} 時間\n\n投票後、`!Doom claimvote` と入力して報酬を受け取ろう！ 🚀",
+        "id_gaul": "**Support bot ini dengan vote di Top.gg!** 🔥\n\n🔗 **[Klik di sini untuk Vote]({url})**\n\n**🎁 Reward Vote:**\n• **{min} - {max} koin** langsung ke saldo lo!\n• **+{pct}% bonus coin mancing** selama **{mins} menit**!\n\n**⏰ Cooldown Claim:** {cd} jam\n\nSetelah vote, ketik `dclaimvote` untuk ambil reward! 🚀",
+        "id":       "**Support bot ini dengan vote di Top.gg!** 🔥\n\n🔗 **[Klik di sini untuk Vote]({url})**\n\n**🎁 Reward Vote:**\n• **{min} - {max} koin** langsung ke saldo lo!\n• **+{pct}% bonus coin mancing** selama **{mins} menit**!\n\n**⏰ Cooldown Claim:** {cd} jam\n\nSetelah vote, ketik `dclaimvote` untuk ambil reward! 🚀",
+        "en":      "**Support this bot by voting on Top.gg!** 🔥\n\n🔗 **[Click here to Vote]({url})**\n\n**🎁 Vote Rewards:**\n• **{min} - {max} coins** directly to your balance!\n• **+{pct}% fishing coin bonus** for **{mins} minutes**!\n\n**⏰ Claim Cooldown:** {cd} hours\n\nAfter voting, type `dclaimvote` to claim your reward! 🚀",
+        "de":      "**Unterstütze diesen Bot durch Abstimmen auf Top.gg!** 🔥\n\n🔗 **[Hier klicken zum Abstimmen]({url})**\n\n**🎁 Abstimmungsbelohnungen:**\n• **{min} - {max} Münzen** direkt auf dein Konto!\n• **+{pct}% Angel-Münzen-Bonus** für **{mins} Minuten**!\n\n**⏰ Claim-Abklingzeit:** {cd} Stunden\n\nNach dem Abstimmen tippe `dclaimvote` um deine Belohnung zu erhalten! 🚀",
+        "ar":      "**ادعم هذا البوت بالتصويت على Top.gg!** 🔥\n\n🔗 **[انقر هنا للتصويت]({url})**\n\n**🎁 مكافآت التصويت:**\n• **{min} - {max} عملة** مباشرة إلى رصيدك!\n• **+{pct}% مكافأة عملة الصيد** لمدة **{mins} دقيقة**!\n\n**⏰ مهلة المطالبة:** {cd} ساعات\n\nبعد التصويت، اكتب `dclaimvote` للمطالبة بمكافأتك! 🚀",
+        "th":      "**สนับสนุนบอทนี้ด้วยการโหวตบน Top.gg!** 🔥\n\n🔗 **[คลิกที่นี่เพื่อโหวต]({url})**\n\n**🎁 รางวัลโหวต:**\n• **{min} - {max} เหรียญ** ตรงไปยังยอดเงินของคุณ!\n• **+{pct}% โบนัสเหรียญตกปลา** เป็นเวลา **{mins} นาที**!\n\n**⏰ คูลดาวน์การเคลม:** {cd} ชั่วโมง\n\nหลังจากโหวต พิมพ์ `dclaimvote` เพื่อรับรางวัล! 🚀",
+        "ja":      "**Top.gg でボットに投票してサポートしよう！** 🔥\n\n🔗 **[こちらをクリックして投票]({url})**\n\n**🎁 投票報酬:**\n• **{min} - {max} コイン** が即座に残高へ！\n• **+{pct}% 釣りコインボーナス** が **{mins} 分間** 有効！\n\n**⏰ クレームクールダウン:** {cd} 時間\n\n投票後、`dclaimvote` と入力して報酬を受け取ろう！ 🚀",
     },
     "vote_not_voted_title": {
         "id_gaul": "❌ Belum Vote Bro!",
@@ -1250,13 +1250,13 @@ TRANSLATIONS: dict = {
         "ja":      "❌ まだ投票していません！",
     },
     "vote_not_voted_desc": {
-        "id_gaul": "Lo belum vote bot ini di Top.gg!\n\n🔗 **[Vote Sekarang di sini]({url})**\n\nSetelah vote, tunggu beberapa detik terus ketik `!Doom claimvote` lagi ya!",
-        "id":       "Lo belum vote bot ini di Top.gg!\n\n🔗 **[Vote Sekarang di sini]({url})**\n\nSetelah vote, tunggu beberapa detik terus ketik `!Doom claimvote` lagi ya!",
-        "en":      "You haven't voted for this bot on Top.gg yet!\n\n🔗 **[Vote Now here]({url})**\n\nAfter voting, wait a few seconds then type `!Doom claimvote` again!",
-        "de":      "Du hast noch nicht für diesen Bot auf Top.gg abgestimmt!\n\n🔗 **[Jetzt hier abstimmen]({url})**\n\nNach dem Abstimmen warte ein paar Sekunden und tippe dann `!Doom claimvote` erneut!",
-        "ar":      "لم تصوت لهذا البوت على Top.gg بعد!\n\n🔗 **[صوّت الآن هنا]({url})**\n\nبعد التصويت، انتظر بضع ثوانٍ ثم اكتب `!Doom claimvote` مرة أخرى!",
-        "th":      "คุณยังไม่ได้โหวตบอทนี้บน Top.gg!\n\n🔗 **[โหวตตอนนี้ที่นี่]({url})**\n\nหลังจากโหวตแล้ว รอสักครู่แล้วพิมพ์ `!Doom claimvote` อีกครั้ง!",
-        "ja":      "まだTop.ggでこのボットに投票していません！\n\n🔗 **[今すぐここで投票]({url})**\n\n投票後、数秒待ってから`!Doom claimvote`と入力してください！",
+        "id_gaul": "Lo belum vote bot ini di Top.gg!\n\n🔗 **[Vote Sekarang di sini]({url})**\n\nSetelah vote, tunggu beberapa detik terus ketik `dclaimvote` lagi ya!",
+        "id":       "Lo belum vote bot ini di Top.gg!\n\n🔗 **[Vote Sekarang di sini]({url})**\n\nSetelah vote, tunggu beberapa detik terus ketik `dclaimvote` lagi ya!",
+        "en":      "You haven't voted for this bot on Top.gg yet!\n\n🔗 **[Vote Now here]({url})**\n\nAfter voting, wait a few seconds then type `dclaimvote` again!",
+        "de":      "Du hast noch nicht für diesen Bot auf Top.gg abgestimmt!\n\n🔗 **[Jetzt hier abstimmen]({url})**\n\nNach dem Abstimmen warte ein paar Sekunden und tippe dann `dclaimvote` erneut!",
+        "ar":      "لم تصوت لهذا البوت على Top.gg بعد!\n\n🔗 **[صوّت الآن هنا]({url})**\n\nبعد التصويت، انتظر بضع ثوانٍ ثم اكتب `dclaimvote` مرة أخرى!",
+        "th":      "คุณยังไม่ได้โหวตบอทนี้บน Top.gg!\n\n🔗 **[โหวตตอนนี้ที่นี่]({url})**\n\nหลังจากโหวตแล้ว รอสักครู่แล้วพิมพ์ `dclaimvote` อีกครั้ง!",
+        "ja":      "まだTop.ggでこのボットに投票していません！\n\n🔗 **[今すぐここで投票]({url})**\n\n投票後、数秒待ってから`dclaimvote`と入力してください！",
     },
     "vote_cooldown_title": {
         "id_gaul": "⏰ Cooldown Claim Vote",
@@ -1425,7 +1425,7 @@ def premium_required(ctx_or_interaction):
         (
             "Command ini **khusus untuk member Premium** bro!\n\n"
             "Dapetin akses premium dengan ketik:\n"
-            "**`!Doom premium`** untuk lihat paket & cara order.\n\n"
+            "**`dpremium`** untuk lihat paket & cara order.\n\n"
             "✨ Upgrade sekarang dan nikmatin semua fitur eksklusif!"
         ),
         color=0xFFD700,
@@ -1500,7 +1500,7 @@ def premium_block_panel(user_id=None, command_name: str = "") -> "StartDoomPanel
         "━━━━━━━━━━━━━━━━━━━━━━\n"
         "**📦 Available Packages**\n"
         f"{pkg_text}\n\n"
-        "Type `!Doom premium` to see full details & order now!\n"
+        "Type `dpremium` to see full details & order now!\n"
         "━━━━━━━━━━━━━━━━━━━━━━\n"
         "✨ Unlock all exclusive features by upgrading to Premium."
     )
@@ -1572,7 +1572,7 @@ async def check_maintenance(ctx) -> bool:
 async def on_ready():
     print(f"✅ {bot.user} udah nyala bro!")
     await bot.change_presence(
-        activity=discord.Activity(type=discord.ActivityType.watching, name="StartDoom | !Doom help")
+        activity=discord.Activity(type=discord.ActivityType.watching, name="StartDoom | dhelp")
     )
     try:
         synced = await tree.sync()
@@ -1629,13 +1629,13 @@ async def on_message(message):
 
     # ===== NO-PREFIX SYSTEM =====
     # User yang di-grant akses "no prefix" oleh owner (atau owner sendiri) bisa
-    # ketik nama command langsung tanpa "!Doom " di depannya.
+    # ketik nama command langsung tanpa "d" di depannya.
     if message.guild and message.content and not message.content.startswith("!"):
         if is_noprefix_user(message.author.id):
             first_word = message.content.strip().split(" ")[0].lower()
             if first_word in get_all_command_names():
                 fake_message = copy.copy(message)
-                fake_message.content = f"!Doom {message.content.strip()}"
+                fake_message.content = f"d{message.content.strip()}"
                 await bot.process_commands(fake_message)
                 return
 
@@ -2215,7 +2215,7 @@ class FishingMainView(discord.ui.LayoutView):
         await interaction.response.edit_message(view=self)
 
         # Cek kalau ada quest mancing yang baru "siap diklaim" (belum auto-reward,
-        # user harus klaim manual lewat !Doom quest)
+        # user harus klaim manual lewat dquest)
         newly_ready = [
             q for q in get_quest_status(uid)
             if q["type"] == "fish" and q["ready"] and q["progress"] == q["target"]
@@ -2224,7 +2224,7 @@ class FishingMainView(discord.ui.LayoutView):
             labels = ", ".join(q["label"] for q in newly_ready)
             try:
                 await interaction.followup.send(
-                    f"{emoji('quest')} **Quest siap diklaim:** {labels}\nKetik `!Doom quest` buat klaim reward-nya!",
+                    f"{emoji('quest')} **Quest siap diklaim:** {labels}\nKetik `dquest` buat klaim reward-nya!",
                     ephemeral=True
                 )
             except Exception:
@@ -2721,7 +2721,7 @@ class PremiumOrderView(discord.ui.View):
             dm_em.add_field(
                 name="💡 Get Started",
                 value=(
-                    "Use `!Doom premium` to check your status anytime.\n"
+                    "Use `dpremium` to check your status anytime.\n"
                     "Thank you for supporting **StartDoom**! 🙏"
                 ),
                 inline=False
@@ -3289,38 +3289,38 @@ async def on_guild_join(guild: discord.Guild):
 
     fields = [
         ("🎣 Fishing & Mini Games", (
-            "`!Doom fish` / `/fish` — Go fishing & sell your catch\n"
-            "`!Doom tebak` / `/tebak` — Riddle arena with coin rewards\n"
-            "`!Doom coins` / `/coins` — Check your coin balance\n"
-            "`!Doom leaderboard` / `/leaderboard` — Level ranking"
+            "`dfish` / `/fish` — Go fishing & sell your catch\n"
+            "`dtebak` / `/tebak` — Riddle arena with coin rewards\n"
+            "`dcoins` / `/coins` — Check your coin balance\n"
+            "`dleaderboard` / `/leaderboard` — Level ranking"
         )),
         ("⚠️ Moderation", (
-            "`!Doom warn` — Warn a member\n"
-            "`!Doom kick` / `ban` / `timeout` — Moderate members\n"
-            "`!Doom clear` — Bulk delete messages\n"
-            "`!Doom addrole` / `removerole` — Manage roles"
+            "`dwarn` — Warn a member\n"
+            "`dkick` / `ban` / `timeout` — Moderate members\n"
+            "`dclear` — Bulk delete messages\n"
+            "`daddrole` / `removerole` — Manage roles"
         )),
         ("🎉 Events & Giveaways", (
-            "`!Doom giveaway` / `/giveaway` — Start a giveaway\n"
-            "`!Doom event` / `/event` — Announce events with auto-timer\n"
-            "`!Doom sticky` — Sticky message in a channel"
+            "`dgiveaway` / `/giveaway` — Start a giveaway\n"
+            "`devent` / `/event` — Announce events with auto-timer\n"
+            "`dsticky` — Sticky message in a channel"
         )),
         ("🎭 Roles", (
             "`/reactionrole` — Button role picker\n"
-            "`!Doom addrole` / `removerole` — Manage roles"
+            "`daddrole` / `removerole` — Manage roles"
         )),
         ("🪙 Coins & Quest", (
-            "`!Doom daily` / `/daily` — Klaim koin harian\n"
-            "`!Doom quest` / `/quest` — Cek progress quest mancing"
+            "`ddaily` / `/daily` — Klaim koin harian\n"
+            "`dquest` / `/quest` — Cek progress quest mancing"
         )),
         ("🛠️ Utilities", (
-            "`!Doom autoresponse` — Auto-reply on trigger words\n"
-            "`!Doom embed` — Send custom embed messages\n"
-            "`!Doom vote` — Vote the bot & get coin rewards"
+            "`dautoresponse` — Auto-reply on trigger words\n"
+            "`dembed` — Send custom embed messages\n"
+            "`dvote` — Vote the bot & get coin rewards"
         )),
         ("👑 Premium", (
             "Some features can be locked for premium members only.\n"
-            "`!Doom premium` — View info & order premium"
+            "`dpremium` — View info & order premium"
         )),
         ("📡 Bot Status & Maintenance Notifications", (
             f"**Current Status:** {maint_status}{maint_reason}\n\n"
@@ -3338,7 +3338,7 @@ async def on_guild_join(guild: discord.Guild):
             ),
             thumbnail_url=str(bot.user.display_avatar.url) if bot.user.display_avatar else None,
             fields=fields,
-            footer=f"Prefix: !Doom | Slash Commands supported! | {len(bot.guilds)} servers"
+            footer=f"Prefix: d | Slash Commands supported! | {len(bot.guilds)} servers"
         ))
     except Exception as e:
         print(f"Failed to send welcome message in {guild.name}: {e}")
@@ -3371,6 +3371,23 @@ async def spin_cmd(ctx):
     if await check_premium_gate(ctx, "spin"): return
     await ctx.reply(view=SpinWheelView(ctx.author.id, body_text=f"Hey **{ctx.author.display_name}**! Pencet tombol di bawah buat coba keberuntungan lo!"))
 
+# Command teks langsung buat Inventori & Shop (BUKAN slash) — soalnya tombol/
+# slash sama-sama interaction yang bisa gagal "didn't respond in time" kalau
+# ack telat >3 detik. Command teks prefix gak punya batasan itu sama sekali,
+# jadi ini fallback yang jauh lebih stabil dibanding harus klik tombol di panel
+# "dfish" buat buka Inventori/Shop. Tombolnya tetap ada juga, dua-duanya jalan.
+@bot.command(name="inventory", aliases=["inv", "inventori"])
+async def inventory_cmd(ctx):
+    if await check_maintenance(ctx): return
+    if await check_premium_gate(ctx, "inventory"): return
+    await ctx.reply(view=InventoryView(ctx.author.id))
+
+@bot.command(name="shop", aliases=["toko"])
+async def shop_cmd(ctx):
+    if await check_maintenance(ctx): return
+    if await check_premium_gate(ctx, "shop"): return
+    await ctx.reply(view=ShopBuyView(ctx.author.id))
+
 @bot.command(name="tebak", aliases=["riddle", "tebakan"])
 async def tebak_cmd(ctx):
     if await check_maintenance(ctx): return
@@ -3392,7 +3409,7 @@ async def tebak_cmd(ctx):
 @commands.has_permissions(administrator=True)
 async def addtebak_cmd(ctx, *, content: str = None):
     if not content:
-        await ctx.reply("❓ Format: `!Doom addtebak Pertanyaan|jawaban|reward_koin`")
+        await ctx.reply("❓ Format: `daddtebak Pertanyaan|jawaban|reward_koin`")
         return
     parts = content.split("|")
     if len(parts) < 2:
@@ -3410,7 +3427,7 @@ async def addtebak_cmd(ctx, *, content: str = None):
 async def listtebak_cmd(ctx):
     custom = get_custom_tebakan()
     if not custom:
-        await ctx.reply("📋 Belum ada soal custom. Tambah pake `!Doom addtebak`!")
+        await ctx.reply("📋 Belum ada soal custom. Tambah pake `daddtebak`!")
         return
     lines = [f"{i+1}. {s['soal']} → **{s['jawaban']}** ({s['reward']} koin)" for i, s in enumerate(custom)]
     await ctx.reply(view=panel(
@@ -3422,7 +3439,7 @@ async def listtebak_cmd(ctx):
 @commands.has_permissions(administrator=True)
 async def removetebak_cmd(ctx, nomor: int = None):
     if not nomor:
-        await ctx.reply("❓ Format: `!Doom removetebak [nomor]`")
+        await ctx.reply("❓ Format: `dremovetebak [nomor]`")
         return
     custom = get_custom_tebakan()
     if nomor < 1 or nomor > len(custom):
@@ -3453,7 +3470,7 @@ async def givecoin_cmd(ctx, member: discord.Member = None, amount: int = None):
     if member is None or amount is None or amount <= 0:
         await ctx.reply(view=panel(
             "⚙️ Cara Pakai",
-            "`!Doom givecoin @user <jumlah>` — Kasih koin gratis ke user (jumlah harus > 0)."
+            "`dgivecoin @user <jumlah>` — Kasih koin gratis ke user (jumlah harus > 0)."
         ))
         return
     uid   = str(member.id)
@@ -3544,7 +3561,7 @@ async def timeout_cmd(ctx, member: discord.Member = None, minutes: int = 10, *, 
 @commands.has_permissions(move_members=True)
 async def move(ctx, member: discord.Member = None, *, channel: discord.VoiceChannel = None):
     if not member or not channel:
-        await ctx.reply("❓ Format: `!Doom move @member #channel`")
+        await ctx.reply("❓ Format: `dmove @member #channel`")
         return
     await member.move_to(channel)
     await ctx.send(view=panel("🔀 Di-Move!", f"**{member.display_name}** dipindah ke **{channel.name}**!"))
@@ -3553,7 +3570,7 @@ async def move(ctx, member: discord.Member = None, *, channel: discord.VoiceChan
 @commands.has_permissions(manage_roles=True)
 async def addrole(ctx, member: discord.Member = None, role: discord.Role = None):
     if not member or not role:
-        await ctx.reply("❓ Format: `!Doom addrole @member @role`")
+        await ctx.reply("❓ Format: `daddrole @member @role`")
         return
     await member.add_roles(role)
     await ctx.send(view=panel("✅ Role Ditambah!", f"**{role.name}** dikasih ke **{member.display_name}**!"))
@@ -3562,7 +3579,7 @@ async def addrole(ctx, member: discord.Member = None, role: discord.Role = None)
 @commands.has_permissions(manage_roles=True)
 async def removerole(ctx, member: discord.Member = None, role: discord.Role = None):
     if not member or not role:
-        await ctx.reply("❓ Format: `!Doom removerole @member @role`")
+        await ctx.reply("❓ Format: `dremoverole @member @role`")
         return
     await member.remove_roles(role)
     await ctx.send(view=panel("❌ Role Dicopot!", f"**{role.name}** dicopot dari **{member.display_name}**!"))
@@ -3596,7 +3613,7 @@ async def clear(ctx, amount: int = 5):
 @commands.has_permissions(manage_messages=True)
 async def embed_cmd(ctx, *, content: str = None):
     if not content:
-        await ctx.reply("❓ Format: `!Doom embed Judul|Deskripsi` atau `!Doom embed Judul|Deskripsi|main`")
+        await ctx.reply("❓ Format: `dembed Judul|Deskripsi` atau `dembed Judul|Deskripsi|main`")
         return
     parts        = content.split("|")
     title        = parts[0].strip()
@@ -3612,7 +3629,7 @@ async def embed_cmd(ctx, *, content: str = None):
             if ch:
                 target_channel = ch
         else:
-            await ctx.reply("⚠️ Main channel belum diset! Gunakan `!Doom setmainchannel #channel` dulu.")
+            await ctx.reply("⚠️ Main channel belum diset! Gunakan `dsetmainchannel #channel` dulu.")
             return
     await target_channel.send(view=panel(title, desc))
     if target_channel != ctx.channel:
@@ -3626,7 +3643,7 @@ async def embed_cmd(ctx, *, content: str = None):
 @commands.has_permissions(administrator=True)
 async def set_main_channel(ctx, channel: discord.TextChannel = None):
     if not channel:
-        await ctx.reply("❓ Format: `!Doom setmainchannel #channel`")
+        await ctx.reply("❓ Format: `dsetmainchannel #channel`")
         return
     config = get_config()
     gid    = str(ctx.guild.id)
@@ -3653,7 +3670,7 @@ async def autoresponse_cmd(ctx, action: str = None, trigger: str = None, *, resp
         text = "\n".join([f"• **{k}** → {v}" for k, v in ar[gid].items()]) or "Belum ada"
         await ctx.reply(view=panel("📋 Auto-Respon", text))
     else:
-        await ctx.reply("❓ Format:\n`!Doom ar add [trigger] [response]`\n`!Doom ar remove [trigger]`\n`!Doom ar list`")
+        await ctx.reply("❓ Format:\n`dar add [trigger] [response]`\n`dar remove [trigger]`\n`dar list`")
 
 @bot.command(name="sticky", aliases=["stickymsg"])
 @commands.has_permissions(manage_messages=True)
@@ -3675,14 +3692,14 @@ async def sticky_cmd(ctx, action: str = None, *, content: str = None):
         save_sticky(sticky)
         await ctx.reply("✅ Sticky dihapus!")
     else:
-        await ctx.reply("❓ Format:\n`!Doom sticky set [pesan]|[min_pesan]`\n`!Doom sticky remove`")
+        await ctx.reply("❓ Format:\n`dsticky set [pesan]|[min_pesan]`\n`dsticky remove`")
 
 @bot.command(name="giveaway", aliases=["ga"])
 @commands.has_permissions(administrator=True)
 async def giveaway_cmd(ctx, duration: str = None, *, prize: str = None):
     if await check_premium_gate(ctx, "giveaway"): return
     if not duration or not prize:
-        await ctx.reply("❓ Format: `!Doom giveaway [durasi][s/m/h] [hadiah]`")
+        await ctx.reply("❓ Format: `dgiveaway [durasi][s/m/h] [hadiah]`")
         return
     multipliers = {"s": 1, "m": 60, "h": 3600}
     unit        = duration[-1].lower()
@@ -3709,9 +3726,9 @@ async def event_cmd(ctx, *, content: str = None):
     if await check_premium_gate(ctx, "event"): return
     if not content:
         await ctx.reply(
-            "❓ Format: `!Doom event Nama|Deskripsi|HH:MM|#channel|durasi_jam`\n"
+            "❓ Format: `devent Nama|Deskripsi|HH:MM|#channel|durasi_jam`\n"
             "• `durasi_jam` = durasi event dalam jam (opsional, default: 1)\n"
-            "Contoh: `!Doom event Turnamen ML|Yuk gaskeun!|20:00|#announce|2`"
+            "Contoh: `devent Turnamen ML|Yuk gaskeun!|20:00|#announce|2`"
         )
         return
     parts          = content.split("|")
@@ -3834,7 +3851,7 @@ async def event_cmd(ctx, *, content: str = None):
 @commands.has_permissions(manage_emojis=True)
 async def addemoji_cmd(ctx):
     """
-    Usage: !Doom addemoji <emoji1> <emoji2> ...
+    Usage: daddemoji <emoji1> <emoji2> ...
     Langsung parse emoji dari pesan yang sama — tidak perlu kirim ulang.
     """
     # Ambil semua custom emoji dari pesan command itu sendiri
@@ -3844,7 +3861,7 @@ async def addemoji_cmd(ctx):
             view=panel(
                 "❌ Tidak Ada Emoji",
                 "Sertakan emoji custom yang mau ditambah langsung di pesan command!\n\n"
-                "**Contoh:** `!Doom addemoji :NamaEmoji: :EmojiLain:`"
+                "**Contoh:** `daddemoji :NamaEmoji: :EmojiLain:`"
             )
         )
         return
@@ -4241,9 +4258,9 @@ async def noprefix_cmd(ctx, action: str = None, member: discord.Member = None):
     if action not in ("add", "remove") or member is None:
         await ctx.reply(view=panel(
             "⚙️ Cara Pakai",
-            "`!Doom noprefix add @user` — Kasih akses no-prefix\n"
-            "`!Doom noprefix remove @user` — Cabut akses no-prefix\n"
-            "`!Doom noprefix list` — Lihat semua user dengan akses no-prefix"
+            "`dnoprefix add @user` — Kasih akses no-prefix\n"
+            "`dnoprefix remove @user` — Cabut akses no-prefix\n"
+            "`dnoprefix list` — Lihat semua user dengan akses no-prefix"
         ))
         return
 
@@ -4254,7 +4271,7 @@ async def noprefix_cmd(ctx, action: str = None, member: discord.Member = None):
             return
         users.append(uid)
         save_noprefix_users(users)
-        await ctx.reply(view=panel(f"{emoji('success')} No-Prefix Diaktifkan", f"{member.mention} sekarang bisa pakai command tanpa prefix `!Doom`!"))
+        await ctx.reply(view=panel(f"{emoji('success')} No-Prefix Diaktifkan", f"{member.mention} sekarang bisa pakai command tanpa prefix `d`!"))
     else:
         if uid not in users:
             await ctx.reply(view=panel(f"{emoji('fail')} Gak Ketemu", f"{member.mention} emang belum punya akses no-prefix."))
@@ -4289,9 +4306,9 @@ async def setemoji_cmd(ctx, key: str = None, custom_emoji: str = None):
     if custom_emoji is None:
         await ctx.reply(view=panel(
             "⚙️ Cara Pakai",
-            f"`!Doom setemoji {key} <emoji_server>` — Set emoji custom untuk `{key}`\n"
-            f"`!Doom setemoji {key} reset` — Balikin ke emoji default\n"
-            f"`!Doom setemoji list` — Lihat semua emoji yang bisa diatur"
+            f"`dsetemoji {key} <emoji_server>` — Set emoji custom untuk `{key}`\n"
+            f"`dsetemoji {key} reset` — Balikin ke emoji default\n"
+            f"`dsetemoji list` — Lihat semua emoji yang bisa diatur"
         ))
         return
 
@@ -4345,7 +4362,7 @@ async def help_cmd(ctx):
     await ctx.reply(view=panel(
         "📖 StartDoom — Help", "Your complete multipurpose server bot!",
         fields=fields,
-        footer="Prefix: !Doom | Semua command bisa pake slash juga! | Ketik !Doom quest buat cek progress mancing lo"
+        footer="Prefix: d | Semua command bisa pake slash juga! | Ketik dquest buat cek progress mancing lo"
     ))
 
 # ===================== SLASH COMMANDS =====================
@@ -4908,7 +4925,7 @@ async def slash_noprefix(interaction: discord.Interaction, action: str = "list",
             return
         users.append(uid)
         save_noprefix_users(users)
-        await interaction.response.send_message(view=panel(f"{emoji('success')} No-Prefix Diaktifkan", f"{member.mention} sekarang bisa pakai command tanpa prefix `!Doom`!"))
+        await interaction.response.send_message(view=panel(f"{emoji('success')} No-Prefix Diaktifkan", f"{member.mention} sekarang bisa pakai command tanpa prefix `d`!"))
     else:
         if uid not in users:
             await interaction.response.send_message(view=panel(f"{emoji('fail')} Gak Ketemu", f"{member.mention} emang belum punya akses no-prefix."), ephemeral=True)
@@ -5003,7 +5020,7 @@ async def slash_setmaintenancechannel(interaction: discord.Interaction, channel:
 async def prefix_setmaintenancechannel(ctx, channel: discord.TextChannel = None):
     """Admin server bisa pilih channel notif maintenance untuk server mereka sendiri."""
     if not channel:
-        await ctx.reply("❓ Format: `!Doom setmaintenancechannel #channel`")
+        await ctx.reply("❓ Format: `dsetmaintenancechannel #channel`")
         return
     if not channel.permissions_for(ctx.guild.me).send_messages:
         await ctx.reply(view=panel("❌ Bot Tidak Punya Akses", f"Bot tidak punya izin kirim pesan di {channel.mention}!"))
