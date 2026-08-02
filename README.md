@@ -1,6 +1,6 @@
-# 🔥 RepublikDooms Discord Bot
+# 🔥 StartDoom Discord Bot
 
-Bot Discord gaul lengkap buat server lo! Fishing game, moderation, quest, daily login, sampai sistem premium QRIS — semua ada.
+Bot Discord gaul lengkap buat server lo! Fishing game, moderation, quest, daily login, sampai sistem premium QRIS — semua ada, sekarang tampilannya full **Discord Components V2**.
 
 ---
 
@@ -10,9 +10,19 @@ Bot Discord gaul lengkap buat server lo! Fishing game, moderation, quest, daily 
 ```bash
 pip install -r requirements.txt
 ```
+> ⚠️ Butuh **discord.py 2.7.0 atau lebih baru** — versi ini yang pertama kali support Components V2. Kalau `pip install` masih narik versi lama, jalankan `pip install -U discord.py`.
 
-### 2. Set Environment Variables
-Buat file `.env` atau set langsung di terminal:
+### 2. Set Environment Variables (juga berlaku buat Railway)
+Buat file `.env` atau set langsung di terminal / di tab **Variables** Railway:
+
+| Variable | Wajib? | Fungsi |
+|---|---|---|
+| `DISCORD_TOKEN` | ✅ Wajib | Token bot Discord lo |
+| `OWNER_ID` | ✅ Wajib | User ID Discord lo sebagai Owner Bot |
+| `TOPGG_TOKEN` | Opsional | Token API Top.gg (buat cek status vote otomatis) |
+| `WEBHOOK_PASSWORD` | Opsional | Password validasi webhook vote dari Top.gg |
+| `PORT` | Opsional (default `8080`) | Port server Flask buat nerima webhook Top.gg |
+| `BOT_ID` | Opsional | Discord Bot ID, dipakai buat generate link vote Top.gg |
 
 **Windows:**
 ```cmd
@@ -249,8 +259,29 @@ Panel yang sama juga punya tab **Daily** buat lihat status & klaim daily login l
 ## 🗑️ Fitur yang Sudah Dihapus
 Ticket system, leveling/XP, dan ganti bahasa (`setlang`) sudah dihapus dari bot ini. Bot sekarang fixed pakai Bahasa Indonesia gaul untuk semua user.
 
-> ℹ️ Footer di embed sekarang pakai nama **"Nikoliesamphink"**, sementara judul/nama bot di berbagai tempat lain (activity status, judul embed, dll) tetap **"DOOMINIKS PARADISE"**.
+> ℹ️ Footer di embed sekarang pakai nama **"Nikoliesamphink"**. Nama bot yang muncul di tempat lain (activity status, judul panel, welcome message) sekarang **"StartDoom"**.
 
 ---
 
-Made with ❤️ for RepublikDooms
+## 🧩 Status Migrasi Components V2
+Tampilan bot sedang dipindah dari Discord Embed klasik ke **Components V2** (`Container` + `TextDisplay` + `Section` + `ActionRow`) biar lebih rapi dan modern.
+
+**Sudah full Components V2:**
+- Panel utama fishing (`!Doom fish`), shop, panel quest (Daily/Quests + tombol Claim)
+- Semua command moderation (`warn`, `kick`, `ban`, `timeout`, `move`, `addrole`, `removerole`, `avatar`, `userinfo`, `clear`)
+- `help`, `coins`, `daily`, `ping`, `embed`, `setmainchannel`, `autoresponse list`
+- `giveaway`, `event` (termasuk notifikasi mulai/selesainya)
+- `vote`, `claimvote`, `noprefix`, `setemoji`, `addemoji`
+- `reactionrole`, welcome message server baru, panel `maintenance`
+- Semua notifikasi gate premium-locked & maintenance-mode (otomatis kepakai di HAMPIR SEMUA command karena terpusat di satu fungsi)
+
+**Masih pakai Embed klasik (belum sempat dikonversi, aman tetap jalan seperti biasa):**
+- Sistem Arena Tebak-Tebakan (`/tebak`)
+- Alur order & approval Premium/QRIS (`!Doom premium`)
+- Panel setup fishing untuk owner (`!Kingdoom setfishing`)
+
+Kalau lo mau bagian ini juga di-convert, tinggal bilang aja — bagian ini sengaja belum disentuh dulu karena melibatkan alur pembayaran & interaksi multi-step yang risikonya lebih tinggi kalau di-convert tanpa testing live di Discord.
+
+---
+
+Made with ❤️ for StartDoom
