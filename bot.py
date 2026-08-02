@@ -12,7 +12,10 @@ import datetime
 import zoneinfo
 import hashlib
 import aiohttp
+import io
+import math
 from pathlib import Path
+from PIL import Image, ImageDraw, ImageFont
 
 # Top.gg vote system
 try:
@@ -56,6 +59,8 @@ _vote_cache: set = set()
 
 DATA_DIR = Path("data")
 DATA_DIR.mkdir(exist_ok=True)
+
+FONT_DIR = Path(__file__).parent / "assets" / "fonts"
 
 def load_json(filename, default=None):
     path = DATA_DIR / filename
@@ -476,57 +481,405 @@ def claim_ready_quests(uid: str) -> list:
         save_user_fishing(uid, udata)
     return newly
 
-def build_quests_tab_text(user: discord.abc.User) -> str:
-    uid    = str(user.id)
-    udata  = get_user_fishing(uid)
+
+
+# ===================== DAILY CHECKLIST + WEEKLY QUEST TRACKING =====================
+# Counter-based progress buat panel checklist gaya gambar (lihat CHECKLIST IMAGE
+# RENDERER di bawah). Kedua sistem ini pakai "rolling window" per user (reset N
+# jam sejak window_start), bukan reset serentak jam 00:00, biar simpel & gak
+# butuh scheduler terpisah.
+CHECKLIST_WINDOW_H = 24
+WEEKLY_WINDOW_H     = 24 * 7
+
+DAILY_CHECKLIST_BONUS = 200   # bonus koin kalau semua task Daily checklist kelar
+WEEKLY_QUEST_REWARD   = 1500  # reward koin kalau semua task Weekly kelar
+
+def get_checklist_data() -> dict: return load_json("checklist.json", {})
+def save_checklist_data(d):       save_json("checklist.json", d)
+def get_weekly_data() -> dict:    return load_json("weekly.json", {})
+def save_weekly_data(d):          save_json("weekly.json", d)
+
+def _get_window_record(store_getter, uid: str, window_h: float, base_fields: dict) -> dict:
+    data = store_getter()
+    rec  = data.get(str(uid))
+    now  = time.time()
+    if not rec or now - rec.get("window_start", 0) > window_h * 3600:
+        rec = {"window_start": now, **base_fields}
+    return rec
+
+def get_user_checklist(uid: str) -> dict:
+    rec = _get_window_record(get_checklist_data, uid, CHECKLIST_WINDOW_H,
+                              {"fish": 0, "sell": 0, "bonus_claimed": False})
+    data = get_checklist_data()
+    data[str(uid)] = rec
+    save_checklist_data(data)
+    return rec
+
+def bump_checklist(uid: str, key: str, amt: int = 1):
+    rec = get_user_checklist(uid)
+    rec[key] = rec.get(key, 0) + amt
+    data = get_checklist_data()
+    data[str(uid)] = rec
+    save_checklist_data(data)
+
+def claim_checklist_bonus(uid: str) -> bool:
+    rec = get_user_checklist(uid)
+    if rec.get("bonus_claimed"):
+        return False
+    rec["bonus_claimed"] = True
+    data = get_checklist_data()
+    data[str(uid)] = rec
+    save_checklist_data(data)
+    udata = get_user_fishing(uid)
+    udata["coins"] += DAILY_CHECKLIST_BONUS
+    save_user_fishing(uid, udata)
+    return True
+
+def get_user_weekly(uid: str) -> dict:
+    rec = _get_window_record(get_weekly_data, uid, WEEKLY_WINDOW_H,
+                              {"fish": 0, "sell": 0, "vote": 0, "reward_claimed": False})
+    data = get_weekly_data()
+    data[str(uid)] = rec
+    save_weekly_data(data)
+    return rec
+
+def bump_weekly(uid: str, key: str, amt: int = 1):
+    rec = get_user_weekly(uid)
+    rec[key] = rec.get(key, 0) + amt
+    data = get_weekly_data()
+    data[str(uid)] = rec
+    save_weekly_data(data)
+
+def claim_weekly_reward(uid: str) -> bool:
+    rec = get_user_weekly(uid)
+    if rec.get("reward_claimed"):
+        return False
+    rec["reward_claimed"] = True
+    data = get_weekly_data()
+    data[str(uid)] = rec
+    save_weekly_data(data)
+    udata = get_user_fishing(uid)
+    udata["coins"] += WEEKLY_QUEST_REWARD
+    save_user_fishing(uid, udata)
+    return True
+
+def build_daily_checklist_tasks(uid: str) -> list:
+    daily_rec = get_user_daily(uid)
+    vote_rec  = get_vote_record(uid)
+    cl        = get_user_checklist(uid)
+    now       = time.time()
+    daily_done = (now - daily_rec.get("last_claim", 0)) < DAILY_COOLDOWN_H * 3600
+    vote_done  = (now - vote_rec.get("last_claim", 0)) < VOTE_COOLDOWN_H * 3600
+    return [
+        {"label": "Claim your daily", "current": 1 if daily_done else 0, "target": 1, "done": daily_done, "icon": "sun"},
+        {"label": "Claim a vote",     "current": 1 if vote_done else 0,  "target": 1, "done": vote_done,  "icon": "check"},
+        {"label": "Go fishing 3 times", "current": min(cl.get("fish", 0), 3), "target": 3, "done": cl.get("fish", 0) >= 3, "icon": "fish"},
+        {"label": "Sell 3 fish",        "current": min(cl.get("sell", 0), 3), "target": 3, "done": cl.get("sell", 0) >= 3, "icon": "coin"},
+    ]
+
+def build_weekly_checklist_tasks(uid: str) -> list:
+    w = get_user_weekly(uid)
+    targets = {"fish": 100, "sell": 50, "vote": 3}
+    labels  = {"fish": "Hunt 100 fish", "sell": "Sell 50 fish", "vote": "Vote the bot 3 times"}
+    icons   = {"fish": "fish", "sell": "coin", "vote": "check"}
+    tasks = []
+    for key in ("fish", "sell", "vote"):
+        cur = w.get(key, 0)
+        tgt = targets[key]
+        tasks.append({"label": labels[key], "current": min(cur, tgt), "target": tgt, "done": cur >= tgt, "icon": icons[key]})
+    return tasks
+
+def build_quest_checklist_tasks(uid: str) -> list:
     status = get_quest_status(uid)
-    ready_count = sum(1 for q in status if q["ready"])
+    return [{
+        "label": q["label"].split(" ", 1)[-1] if q["label"][0] not in "0123456789" else q["label"],
+        "current": min(q["progress"], q["target"]), "target": q["target"],
+        "done": q["done"], "icon": "sword" if q["type"] == "fish" else "check",
+    } for q in status]
 
-    lines = []
-    for q in status:
-        reward_txt = f"+{q['reward_coins']} {emoji('coin')}" + (f" + {q['reward_rod']}" if q["reward_rod"] else "")
-        if q["done"]:
-            mark, box = "✅ Selesai", "✅"
-        elif q["ready"]:
-            mark, box = "🎁 SIAP DIKLAIM!", "🎁"
+
+# ===================== CHECKLIST IMAGE RENDERER (Pillow) =====================
+# Panel Daily/Weekly/Quests digambar sebagai PNG card (mirip referensi bot lain
+# yang dikasih owner), bukan Components V2 text. Card di-generate ulang tiap
+# kali user pindah tab, terus dikirim sebagai attachment baru lewat
+# interaction.response.edit_message(attachments=[...]).
+
+_FONT_CACHE: dict = {}
+
+def ck_font(weight: str, size: int) -> ImageFont.FreeTypeFont:
+    key = (weight, size)
+    if key not in _FONT_CACHE:
+        path = FONT_DIR / f"Poppins-{weight}.ttf"
+        try:
+            _FONT_CACHE[key] = ImageFont.truetype(str(path), size)
+        except Exception:
+            _FONT_CACHE[key] = ImageFont.load_default()
+    return _FONT_CACHE[key]
+
+CK_BG          = (16, 15, 26)
+CK_CARD        = (26, 24, 38)
+CK_CARD_BORDER = (40, 37, 56)
+CK_ROW_BG      = (33, 31, 48)
+CK_ROW_DONE_BG = (24, 30, 26)
+CK_ACCENT      = (124, 92, 255)
+CK_ACCENT_2    = (90, 200, 130)
+CK_TEXT_MAIN   = (235, 234, 240)
+CK_TEXT_DIM    = (150, 147, 168)
+CK_TEXT_DONE   = (110, 130, 115)
+CK_BAR_BG      = (52, 49, 70)
+CK_GOLD        = (240, 190, 90)
+CK_WIDTH       = 460
+
+def _ck_rounded(draw, xy, radius, **kw):
+    draw.rounded_rectangle(xy, radius=radius, **kw)
+
+def _ck_badge(size: int, bg, icon_fn) -> Image.Image:
+    im = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+    d  = ImageDraw.Draw(im)
+    d.ellipse((0, 0, size, size), fill=bg)
+    icon_fn(d, size)
+    return im
+
+def _ck_icon_fish(d, s):
+    c = (255, 255, 255)
+    cx, cy, r = s * 0.42, s * 0.5, s * 0.20
+    d.ellipse((cx - r, cy - r * 0.7, cx + r, cy + r * 0.7), fill=c)
+    d.polygon([(cx + r * 0.9, cy), (s * 0.82, cy - s * 0.18), (s * 0.82, cy + s * 0.18)], fill=c)
+    d.ellipse((cx - r * 0.55, cy - r * 0.25, cx - r * 0.3, cy), fill=(30, 20, 50))
+
+def _ck_icon_coin(d, s):
+    c, m = (255, 255, 255), s * 0.18
+    d.ellipse((m, m, s - m, s - m), outline=c, width=max(2, s // 14))
+    fnt = ck_font("Bold", int(s * 0.42))
+    bbox = d.textbbox((0, 0), "$", font=fnt)
+    tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
+    d.text((s / 2 - tw / 2 - bbox[0], s / 2 - th / 2 - bbox[1]), "$", font=fnt, fill=c)
+
+def _ck_icon_check(d, s):
+    c, m = (255, 255, 255), s * 0.2
+    _ck_rounded(d, (m, m, s - m, s - m), radius=s * 0.12, outline=c, width=max(2, s // 14))
+    d.line([(s * 0.32, s * 0.52), (s * 0.44, s * 0.66), (s * 0.70, s * 0.34)], fill=c, width=max(3, s // 10), joint="curve")
+
+def _ck_icon_sun(d, s):
+    c = (255, 255, 255)
+    cx, cy, r = s / 2, s / 2, s * 0.18
+    d.ellipse((cx - r, cy - r, cx + r, cy + r), fill=c)
+    for i in range(8):
+        ang = i * math.pi / 4
+        x1, y1 = cx + math.cos(ang) * r * 1.5, cy + math.sin(ang) * r * 1.5
+        x2, y2 = cx + math.cos(ang) * r * 2.1, cy + math.sin(ang) * r * 2.1
+        d.line([(x1, y1), (x2, y2)], fill=c, width=max(2, s // 16))
+
+def _ck_icon_sword(d, s):
+    c = (255, 255, 255)
+    d.line([(s * 0.25, s * 0.75), (s * 0.75, s * 0.25)], fill=c, width=max(3, s // 10))
+    d.line([(s * 0.25, s * 0.25), (s * 0.75, s * 0.75)], fill=c, width=max(3, s // 10))
+
+def _ck_icon_trophy(d, s):
+    c, m = CK_GOLD, s * 0.24
+    d.rectangle((m, m, s - m, s * 0.55), fill=c)
+    d.arc((0, m * 0.6, m * 1.4, s * 0.55), start=90, end=270, fill=c, width=max(2, s // 12))
+    d.arc((s - m * 1.4, m * 0.6, s, s * 0.55), start=270, end=90, fill=c, width=max(2, s // 12))
+    d.rectangle((s * 0.42, s * 0.55, s * 0.58, s * 0.72), fill=c)
+    d.rectangle((s * 0.3, s * 0.72, s * 0.7, s * 0.8), fill=c)
+
+CK_ICONS = {"fish": _ck_icon_fish, "coin": _ck_icon_coin, "check": _ck_icon_check,
+            "sun": _ck_icon_sun, "sword": _ck_icon_sword}
+
+def _ck_bar(d, x, y, w, h, frac, fill):
+    _ck_rounded(d, (x, y, x + w, y + h), radius=h / 2, fill=CK_BAR_BG)
+    frac = max(0.0, min(1.0, frac))
+    if frac > 0:
+        fw = max(h, w * frac)
+        _ck_rounded(d, (x, y, x + fw, y + h), radius=h / 2, fill=fill)
+
+def _ck_tabbar(d, x, y, w, active: str):
+    tabs = [("daily", "Daily"), ("weekly", "Weekly"), ("quests", "Quests")]
+    gap, h = 8, 40
+    tw = (w - gap * 2) / 3
+    for i, (key, label) in enumerate(tabs):
+        tx = x + i * (tw + gap)
+        is_active = key == active
+        _ck_rounded(d, (tx, y, tx + tw, y + h), radius=12, fill=CK_ACCENT if is_active else CK_ROW_BG)
+        fnt = ck_font("SemiBold", 15)
+        bbox = d.textbbox((0, 0), label, font=fnt)
+        d.text((tx + tw / 2 - (bbox[2] - bbox[0]) / 2, y + 10), label, font=fnt,
+               fill=(255, 255, 255) if is_active else CK_TEXT_DIM)
+    return y + h
+
+def render_checklist_card(tab: str, username: str, balance: int, tasks: list, reset_text: str) -> io.BytesIO:
+    pad, header_h, row_h, row_gap, footer_h = 20, 92, 62, 10, 66
+    n = max(1, len(tasks))
+    height = int(pad + 48 + 14 + header_h + n * (row_h + row_gap) + footer_h + pad)
+
+    img = Image.new("RGB", (CK_WIDTH, height), CK_BG)
+    d = ImageDraw.Draw(img)
+    _ck_rounded(d, (pad // 2, pad // 2, CK_WIDTH - pad // 2, height - pad // 2), radius=22,
+                fill=CK_CARD, outline=CK_CARD_BORDER, width=2)
+
+    cx, cw = pad, CK_WIDTH - pad * 2
+    cy = _ck_tabbar(d, cx, pad, cw, tab) + 14
+
+    title_map = {"daily": "Daily Checklist", "weekly": "Weekly Checklist", "quests": "Quest Log"}
+    badge = _ck_badge(46, CK_ACCENT, CK_ICONS["check"])
+    img.paste(badge, (cx, cy), badge)
+    d.text((cx + 58, cy - 2), f"@{username}'s {title_map.get(tab, 'Checklist')}", font=ck_font("Bold", 17), fill=CK_TEXT_MAIN)
+    subtitle = "Complete quests to earn rewards!" if tab == "quests" else f"Complete {n} tasks to earn your reward!"
+    d.text((cx + 58, cy + 22), subtitle, font=ck_font("Regular", 12), fill=CK_TEXT_DIM)
+    bal_fnt = ck_font("Medium", 13)
+    bal_txt = f"Balance: {balance} "
+    d.text((cx + 58, cy + 42), bal_txt, font=bal_fnt, fill=CK_GOLD)
+    bw = d.textbbox((0, 0), bal_txt, font=bal_fnt)[2]
+    coin_icon = _ck_badge(16, CK_GOLD, _ck_icon_coin)
+    img.paste(coin_icon, (int(cx + 58 + bw), cy + 42), coin_icon)
+    d.text((cx + 58 + bw + 20, cy + 42), "koin", font=bal_fnt, fill=CK_GOLD)
+
+    trophy = _ck_badge(44, (46, 42, 30), _ck_icon_trophy)
+    img.paste(trophy, (cx + cw - 44, cy), trophy)
+
+    cy += header_h
+    for t in tasks:
+        _ck_rounded(d, (cx, cy, cx + cw, cy + row_h), radius=14, fill=CK_ROW_DONE_BG if t["done"] else CK_ROW_BG)
+        icon_im = _ck_badge(38, CK_ACCENT_2 if t["done"] else (60, 56, 82), CK_ICONS.get(t.get("icon", "check"), _ck_icon_check))
+        img.paste(icon_im, (cx + 12, cy + 12), icon_im)
+
+        label_fnt = ck_font("SemiBold", 14)
+        label_color = CK_TEXT_DONE if t["done"] else CK_TEXT_MAIN
+        label = t["label"][:34]
+        d.text((cx + 62, cy + 10), label, font=label_fnt, fill=label_color)
+        if t["done"]:
+            bbox = d.textbbox((cx + 62, cy + 10), label, font=label_fnt)
+            ymid = (bbox[1] + bbox[3]) / 2
+            d.line([(bbox[0], ymid), (bbox[2], ymid)], fill=label_color, width=2)
+
+        frac_fnt = ck_font("Medium", 12)
+        frac_txt = f"{t['current']}/{t['target']}"
+        fbbox = d.textbbox((0, 0), frac_txt, font=frac_fnt)
+        d.text((cx + cw - (fbbox[2] - fbbox[0]) - 14, cy + 12), frac_txt, font=frac_fnt,
+               fill=CK_ACCENT_2 if t["done"] else CK_TEXT_DIM)
+
+        _ck_bar(d, cx + 62, cy + 40, cw - 62 - 14, 8, t["current"] / max(1, t["target"]),
+                CK_ACCENT_2 if t["done"] else CK_ACCENT)
+        cy += row_h + row_gap
+
+    done_n = sum(1 for t in tasks if t["done"])
+    d.text((cx, cy + 4), title_map.get(tab, "Progress").replace(" Checklist", " Progress").replace("Quest Log", "Quest Progress"),
+           font=ck_font("SemiBold", 14), fill=CK_TEXT_MAIN)
+    frac_txt = f"{done_n}/{n}"
+    ffnt = ck_font("SemiBold", 14)
+    fbbox = d.textbbox((0, 0), frac_txt, font=ffnt)
+    d.text((cx + cw - (fbbox[2] - fbbox[0]), cy + 4), frac_txt, font=ffnt, fill=CK_TEXT_MAIN)
+    cy += 26
+    _ck_bar(d, cx, cy, cw, 10, done_n / n, CK_ACCENT_2)
+    cy += 22
+    d.text((cx, cy), reset_text, font=ck_font("Regular", 12), fill=CK_TEXT_DIM)
+
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    buf.seek(0)
+    return buf
+
+
+class ChecklistPanelView(discord.ui.View):
+    """View interaktif Daily/Weekly/Quests. Tiap pindah tab, gambar card-nya
+    di-generate ulang lewat render_checklist_card() dan dikirim sebagai
+    attachment baru (edit_message dengan attachments=[file])."""
+    def __init__(self, user: discord.abc.User, tab: str = "daily"):
+        super().__init__(timeout=120)
+        self.user = user
+        self.tab  = tab
+        self._build_buttons()
+
+    def _build_buttons(self):
+        self.clear_items()
+        for key, label, style in [
+            ("daily", "📋 Daily", discord.ButtonStyle.primary),
+            ("weekly", "📅 Weekly", discord.ButtonStyle.primary),
+            ("quests", "📖 Quests", discord.ButtonStyle.primary),
+        ]:
+            btn = discord.ui.Button(label=label, style=style if key == self.tab else discord.ButtonStyle.secondary, row=0)
+            btn.callback = self._make_tab_cb(key)
+            self.add_item(btn)
+        claim_btn = discord.ui.Button(label="🎁 Claim", style=discord.ButtonStyle.success, row=1)
+        claim_btn.callback = self.claim
+        self.add_item(claim_btn)
+
+    def _make_tab_cb(self, key: str):
+        async def cb(interaction: discord.Interaction):
+            if interaction.user.id != self.user.id:
+                await interaction.response.send_message("❌ Bukan panel lo bro!", ephemeral=True)
+                return
+            self.tab = key
+            self._build_buttons()
+            await interaction.response.edit_message(attachments=[self._render()], view=self)
+        return cb
+
+    def _tasks(self) -> list:
+        uid = str(self.user.id)
+        if self.tab == "weekly":
+            return build_weekly_checklist_tasks(uid)
+        if self.tab == "quests":
+            return build_quest_checklist_tasks(uid)
+        return build_daily_checklist_tasks(uid)
+
+    def _reset_text(self) -> str:
+        uid = str(self.user.id)
+        now = time.time()
+        if self.tab == "weekly":
+            w = get_user_weekly(uid)
+            left = WEEKLY_WINDOW_H * 3600 - (now - w.get("window_start", now))
+        elif self.tab == "quests":
+            return "Progress mancing lo, gak ada reset waktu"
         else:
-            mark, box = f"{min(q['progress'], q['target'])}/{q['target']}", "⬜"
-        lines.append(f"{box} **{q['label']}** — {mark}  *({reward_txt})*")
+            cl = get_user_checklist(uid)
+            left = CHECKLIST_WINDOW_H * 3600 - (now - cl.get("window_start", now))
+        left = max(0, int(left))
+        h, m = left // 3600, (left % 3600) // 60
+        return f"Checklist resets in {h}h {m}m"
 
-    desc = f"Complete quests to earn rewards!\n**Balance:** {udata['coins']} {emoji('coin')}\n\n" + "\n".join(lines)
+    def _render(self) -> discord.File:
+        buf = render_checklist_card(self.tab, self.user.display_name, get_user_fishing(str(self.user.id))["coins"],
+                                     self._tasks(), self._reset_text())
+        return discord.File(buf, filename="checklist.png")
 
-    if ready_count:
-        desc += f"\n\n🎉 Ada **{ready_count}** quest siap diklaim! Pencet tombol **Claim** di bawah."
-    elif all(q["done"] for q in status):
-        desc += "\n\nUwU Lo udah nyelesain semua quest! Balik lagi kalau ada quest baru~ <3"
-    else:
-        desc += "\n\nTerus mancing atau vote bot buat lanjutin progress quest lo!"
+    async def claim(self, interaction: discord.Interaction):
+        if interaction.user.id != self.user.id:
+            await interaction.response.send_message("❌ Bukan panel lo bro!", ephemeral=True)
+            return
+        uid = str(self.user.id)
+        if self.tab == "quests":
+            newly = claim_ready_quests(uid)
+            if not newly:
+                await interaction.response.send_message("⚠️ Gak ada quest yang siap diklaim!", ephemeral=True)
+                return
+            labels = ", ".join(q["label"] for q in newly)
+            await interaction.response.send_message(f"🎉 Quest diklaim: **{labels}**!", ephemeral=True)
+        elif self.tab == "weekly":
+            tasks = build_weekly_checklist_tasks(uid)
+            if not all(t["done"] for t in tasks):
+                await interaction.response.send_message("⚠️ Beresin semua task weekly dulu bro!", ephemeral=True)
+                return
+            if not claim_weekly_reward(uid):
+                await interaction.response.send_message("⚠️ Reward weekly udah diklaim minggu ini!", ephemeral=True)
+                return
+            await interaction.response.send_message(f"🎉 Weekly reward diklaim! +**{WEEKLY_QUEST_REWARD}** koin!", ephemeral=True)
+        else:
+            tasks = build_daily_checklist_tasks(uid)
+            if not all(t["done"] for t in tasks):
+                await interaction.response.send_message("⚠️ Beresin semua task daily dulu bro!", ephemeral=True)
+                return
+            if not claim_checklist_bonus(uid):
+                await interaction.response.send_message("⚠️ Bonus daily udah diklaim hari ini!", ephemeral=True)
+                return
+            await interaction.response.send_message(f"🎉 Daily checklist bonus diklaim! +**{DAILY_CHECKLIST_BONUS}** koin!", ephemeral=True)
+        self._build_buttons()
+        await interaction.edit_original_response(attachments=[self._render()], view=self)
 
-    return f"### 📜 @{user.display_name}'s Quest Log\n{desc}"
 
-def build_daily_tab_text(user: discord.abc.User) -> str:
-    uid     = str(user.id)
-    record  = get_user_daily(uid)
-    now     = time.time()
-    elapsed = now - record.get("last_claim", 0)
-    cooldown_s = DAILY_COOLDOWN_H * 3600
-
-    if elapsed < cooldown_s:
-        sisa_s = int(cooldown_s - elapsed)
-        h, m   = sisa_s // 3600, (sisa_s % 3600) // 60
-        desc = (
-            f"⏰ Daily lo udah diklaim hari ini!\n"
-            f"Klaim lagi dalam **{h} jam {m} menit**.\n\n"
-            f"**{emoji('streak')} Streak Lo:** {record.get('streak', 0)} hari"
-        )
-    else:
-        preview_streak = record.get("streak", 0) + 1 if elapsed <= DAILY_STREAK_GRACE_H * 3600 else 1
-        desc = (
-            f"{emoji('daily')} Daily lo udah siap diklaim! Pencet tombol **Claim** di bawah.\n\n"
-            f"**{emoji('streak')} Kalau diklaim sekarang, streak jadi:** {preview_streak} hari"
-        )
-
-    return f"### 📋 @{user.display_name}'s Daily Login\n{desc}"
+async def send_checklist_panel(sender, user: discord.abc.User, tab: str = "daily"):
+    """Kirim panel checklist pertama kali. `sender` = ctx.send / ctx.reply / interaction.response.send_message."""
+    view = ChecklistPanelView(user, tab=tab)
+    await sender(file=view._render(), view=view)
 
 
 # ===================== EMOJI SERVER SYSTEM =====================
@@ -1637,6 +1990,129 @@ class ReactionRoleView(discord.ui.LayoutView):
 
 # ===================== FISHING VIEWS =====================
 
+# ===================== MANUAL SELL FISH =====================
+# Sekarang ikan hasil mancing GAK auto-sell — numpuk dulu di inventori,
+# baru dikonversi jadi koin lewat tombol "Jual" di panel Inventori.
+
+def _fish_sell_price(fish_name: str) -> int:
+    fishes, _, _ = get_fishing_config()
+    for f in fishes:
+        if f["name"] == fish_name:
+            return f.get("sell_price", 0)
+    return 0
+
+def sell_all_fish(uid: str) -> dict:
+    """Jual SEMUA ikan di inventori user. Return {count, total}."""
+    udata = get_user_fishing(uid)
+    inv   = udata.get("inventory", [])
+    if not inv:
+        return {"count": 0, "total": 0}
+    vote_active = is_vote_bonus_active(uid)
+    total = 0
+    for name in inv:
+        base  = _fish_sell_price(name)
+        bonus = int(base * VOTE_BONUS_PCTS / 100) if vote_active else 0
+        total += base + bonus
+    count = len(inv)
+    udata["coins"] += total
+    udata["inventory"] = []
+    save_user_fishing(uid, udata)
+    bump_checklist(uid, "sell", count)
+    bump_weekly(uid, "sell", count)
+    return {"count": count, "total": total}
+
+def sell_fish_type(uid: str, fish_name: str) -> dict:
+    """Jual semua ikan dari SATU jenis tertentu di inventori. Return {count, total}."""
+    udata = get_user_fishing(uid)
+    inv   = udata.get("inventory", [])
+    count = inv.count(fish_name)
+    if count == 0:
+        return {"count": 0, "total": 0}
+    vote_active = is_vote_bonus_active(uid)
+    base  = _fish_sell_price(fish_name)
+    bonus = int(base * VOTE_BONUS_PCTS / 100) if vote_active else 0
+    total = (base + bonus) * count
+    udata["inventory"] = [x for x in inv if x != fish_name]
+    udata["coins"] += total
+    save_user_fishing(uid, udata)
+    bump_checklist(uid, "sell", count)
+    bump_weekly(uid, "sell", count)
+    return {"count": count, "total": total}
+
+
+class SellFishSelect(discord.ui.Select):
+    """Dropdown buat jual 1 jenis ikan tertentu dari inventori."""
+    def __init__(self, user_id: int, inv_count: dict):
+        options = [
+            discord.SelectOption(label=f"{name} (x{qty})", value=name,
+                                  description=f"Jual semua {name} — {_fish_sell_price(name)} 🪙/ekor")
+            for name, qty in list(inv_count.items())[:25]
+        ]
+        super().__init__(placeholder="Pilih ikan buat dijual...", options=options, row=1)
+        self.user_id = user_id
+
+    async def callback(self, interaction: discord.Interaction):
+        if interaction.user.id != self.user_id:
+            await interaction.response.send_message("❌ Privasi dong!", ephemeral=True)
+            return
+        result = sell_fish_type(str(self.user_id), self.values[0])
+        await interaction.response.edit_message(
+            view=InventoryView(self.user_id,
+                note=f"✅ Terjual **{result['count']}x {self.values[0]}** → +**{result['total']}** 🪙!")
+        )
+
+
+class InventoryView(discord.ui.LayoutView):
+    """Panel inventori + tombol/dropdown buat jual ikan (sistem manual sell)."""
+    def __init__(self, user_id: int, note: str | None = None):
+        super().__init__(timeout=120)
+        self.user_id = user_id
+        self.note    = note
+        self._build()
+
+    def _build(self):
+        self.clear_items()
+        udata     = get_user_fishing(str(self.user_id))
+        inv       = udata.get("inventory", [])
+        inv_count = {}
+        for item in inv:
+            inv_count[item] = inv_count.get(item, 0) + 1
+        est_total = sum(_fish_sell_price(n) * q for n, q in inv_count.items())
+        inv_text  = "\n".join([f"• {k}: x{v} (~{_fish_sell_price(k) * v} 🪙)" for k, v in inv_count.items()]) if inv_count else "Inventori kosong, ayo mancing dulu!"
+        bait_text = "\n".join([f"{k}: x{v}" for k, v in udata.get('bait', {}).items()]) or "Habis!"
+        desc = (
+            f"**Koin:** {udata['coins']} 🪙\n**Rod:** {udata['rod']}\n**Total Tangkapan:** {udata['total_catch']}\n\n"
+            f"**🐟 Ikan (belum dijual, estimasi total: {est_total} 🪙):**\n{inv_text}\n\n**🪱 Umpan:**\n{bait_text}"
+        )
+        if self.note:
+            desc = f"{self.note}\n\n{desc}"
+
+        container = discord.ui.Container(accent_colour=DARK_RED)
+        container.add_item(discord.ui.TextDisplay(f"### 🎒 Inventori\n{desc}"))
+        if inv_count:
+            container.add_item(discord.ui.Separator())
+            row = discord.ui.ActionRow()
+            sell_all_btn = discord.ui.Button(label="💰 Jual Semua Ikan", style=discord.ButtonStyle.success)
+            sell_all_btn.callback = self.sell_all
+            row.add_item(sell_all_btn)
+            container.add_item(row)
+        self.add_item(container)
+        if inv_count:
+            self.add_item(SellFishSelect(self.user_id, inv_count))
+
+    async def sell_all(self, interaction: discord.Interaction):
+        if interaction.user.id != self.user_id:
+            await interaction.response.send_message("❌ Privasi dong!", ephemeral=True)
+            return
+        result = sell_all_fish(str(self.user_id))
+        if result["count"] == 0:
+            await interaction.response.send_message("⚠️ Inventori ikan lo udah kosong!", ephemeral=True)
+            return
+        self.note = f"✅ Terjual **{result['count']}x ikan** → +**{result['total']}** 🪙!"
+        self._build()
+        await interaction.response.edit_message(view=self)
+
+
 class FishingMainView(discord.ui.LayoutView):
     """Panel utama fishing, full Components V2 (Container + TextDisplay + ActionRow)."""
     def __init__(self, user_id, body_text: str | None = None):
@@ -1701,48 +2177,38 @@ class FishingMainView(discord.ui.LayoutView):
         udata["bait"] = bait_list
 
         caught, rarity = do_fish_roll(udata.get("rod", "Pancing Bambu"), used_bait)
-        base_price  = caught.get("sell_price", 0)
-        # Vote bonus: +20% coin selama VOTE_BONUS_MINS menit setelah claim vote
-        vote_active  = is_vote_bonus_active(uid)
-        bonus_coins  = int(base_price * VOTE_BONUS_PCTS / 100) if vote_active else 0
-        sell_price   = base_price + bonus_coins
-        udata["coins"]       += sell_price
+        # Ikan GAK auto-sell lagi — numpuk di inventori, dijual manual lewat
+        # tombol "Jual" di panel Inventori (lihat InventoryView / sell_all_fish).
         udata["total_catch"] += 1
         udata["inventory"].append(caught["name"])
         save_user_fishing(uid, udata)
+        bump_checklist(uid, "fish", 1)
+        bump_weekly(uid, "fish", 1)
 
         rarity_label, _ = get_rarity_display(rarity)
-        luck_pct = caught.get("luck", 0)
-        uid_fish = interaction.user.id
+        luck_pct  = caught.get("luck", 0)
+        uid_fish  = interaction.user.id
+        est_price = _fish_sell_price(caught["name"])
 
-        # Info bonus vote
-        bonus_txt = ""
-        if vote_active:
-            sisa_mnt = get_vote_bonus_remaining(uid) // 60
-            bonus_txt = t("fish_vote_bonus", uid_fish,
-                          pct=VOTE_BONUS_PCTS, mins=sisa_mnt)
-
-        bonus_str = f" (+{bonus_coins} bonus vote)" if bonus_coins else ""
         bait_txt  = (t("fish_bait", uid_fish, bait=used_bait)
                      if used_bait else t("fish_no_bait", uid_fish))
         star      = "🌟" if rarity == "legendary" else "💎"
+        sell_hint = f"💰 Nilai jual: ~**{est_price} koin** (belum kejual, cek `Inventori` buat jual!)"
 
         if rarity in ("legendary", "rare"):
             title = t("fish_title_rare", uid_fish, star=star, rarity=rarity_label)
-            desc  = t("fish_desc_rare", uid_fish,
-                name=interaction.user.display_name, emoji=caught["emoji"],
-                fish=caught["name"], luck=luck_pct,
-                coins=sell_price, bonus_txt=bonus_str,
-                total=udata["coins"], rod=udata["rod"], bait_txt=bait_txt
-            ) + bonus_txt + f"\n\n-# {t('fish_rare_footer', uid_fish)}"
+            desc  = (
+                f"**{interaction.user.display_name}** dapet ikan **LANGKA** bro!\n\n"
+                f"{caught['emoji']} **{caught['name']}**\n🍀 Luck: **{luck_pct}%**\n{sell_hint}\n"
+                f"🎣 Rod: **{udata['rod']}**\n{bait_txt}"
+                f"\n\n-# {t('fish_rare_footer', uid_fish)}"
+            )
         else:
             title = t("fish_title_normal", uid_fish, emoji=caught["emoji"])
-            desc  = t("fish_desc_normal", uid_fish,
-                name=interaction.user.display_name, fish=caught["name"],
-                rarity=rarity_label, luck=luck_pct,
-                coins=sell_price, bonus_txt=bonus_str,
-                total=udata["coins"], rod=udata["rod"], bait_txt=bait_txt
-            ) + bonus_txt
+            desc  = (
+                f"**{interaction.user.display_name}** dapet **{caught['name']}** [{rarity_label}]\n"
+                f"🍀 Luck: **{luck_pct}%**\n{sell_hint}\n🎣 Rod: **{udata['rod']}**\n{bait_txt}"
+            )
 
         self.body_text = f"**{title}**\n{desc}"
         self._build()
@@ -1768,21 +2234,7 @@ class FishingMainView(discord.ui.LayoutView):
         if interaction.user.id != self.user_id:
             await interaction.response.send_message("❌ Privasi dong!", ephemeral=True)
             return
-        udata     = get_user_fishing(str(interaction.user.id))
-        inv       = udata.get("inventory", [])
-        inv_count = {}
-        for item in inv:
-            inv_count[item] = inv_count.get(item, 0) + 1
-        inv_text  = "\n".join([f"• {k}: x{v}" for k, v in inv_count.items()]) if inv_count else "Inventori kosong, ayo mancing dulu!"
-        bait_text = "\n".join([f"{k}: x{v}" for k, v in udata.get('bait', {}).items()]) or "Habis!"
-        desc = (
-            f"**Koin:** {udata['coins']} 🪙\n**Rod:** {udata['rod']}\n**Total Tangkapan:** {udata['total_catch']}\n\n"
-            f"**Ikan:**\n{inv_text}\n\n**🪱 Umpan:**\n{bait_text}"
-        )
-        await interaction.response.send_message(
-            view=panel(f"🎒 Inventori {interaction.user.display_name}", desc),
-            ephemeral=True
-        )
+        await interaction.response.send_message(view=InventoryView(interaction.user.id), ephemeral=True)
 
     async def shop(self, interaction: discord.Interaction):
         if interaction.user.id != self.user_id:
@@ -1856,99 +2308,6 @@ class SpinWheelView(discord.ui.LayoutView):
                        footer="Nikoliesamphink · Spin Wheel · Peluang bisa berubah kapan aja diatur owner"),
             ephemeral=True
         )
-
-# ===================== QUEST PANEL VIEW (Daily / Quests tab) =====================
-
-class QuestPanelView(discord.ui.LayoutView):
-    """Panel quest gaya tab (Daily / Quests) mirip quest log bot lain, dengan tombol Claim — full Components V2."""
-    def __init__(self, user: discord.abc.User, tab: str = "quests"):
-        super().__init__(timeout=120)
-        self.user = user
-        self.user_id = user.id
-        self.tab  = tab  # "daily" atau "quests"
-        self._build()
-
-    def _current_text(self) -> str:
-        return build_daily_tab_text(self.user) if self.tab == "daily" else build_quests_tab_text(self.user)
-
-    def _build(self):
-        self.clear_items()
-        container = discord.ui.Container(accent_colour=DARK_RED)
-        container.add_item(discord.ui.TextDisplay(self._current_text()))
-        container.add_item(discord.ui.Separator())
-
-        daily_btn = discord.ui.Button(
-            label="Daily", emoji="📋",
-            style=discord.ButtonStyle.primary if self.tab == "daily" else discord.ButtonStyle.secondary
-        )
-        quest_btn = discord.ui.Button(
-            label="Quests", emoji="📜",
-            style=discord.ButtonStyle.primary if self.tab == "quests" else discord.ButtonStyle.secondary
-        )
-        daily_btn.callback = self._switch_daily
-        quest_btn.callback = self._switch_quests
-        nav_row = discord.ui.ActionRow()
-        nav_row.add_item(daily_btn)
-        nav_row.add_item(quest_btn)
-        container.add_item(nav_row)
-
-        claim_btn = discord.ui.Button(label="Claim", emoji="🎁", style=discord.ButtonStyle.success)
-        claim_btn.callback = self._claim
-        claim_row = discord.ui.ActionRow()
-        claim_row.add_item(claim_btn)
-        container.add_item(claim_row)
-
-        self.add_item(container)
-
-    async def _guard(self, interaction: discord.Interaction) -> bool:
-        if interaction.user.id != self.user_id:
-            await interaction.response.send_message("❌ Ini bukan quest log lo bro!", ephemeral=True)
-            return False
-        return True
-
-    async def _switch_daily(self, interaction: discord.Interaction):
-        if not await self._guard(interaction): return
-        self.tab = "daily"
-        self._build()
-        await interaction.response.edit_message(view=self)
-
-    async def _switch_quests(self, interaction: discord.Interaction):
-        if not await self._guard(interaction): return
-        self.tab = "quests"
-        self._build()
-        await interaction.response.edit_message(view=self)
-
-    async def _claim(self, interaction: discord.Interaction):
-        if not await self._guard(interaction): return
-        uid = str(self.user_id)
-
-        if self.tab == "daily":
-            result = perform_daily_claim(uid)
-            if not result["success"]:
-                h, m = result["sisa_s"] // 3600, (result["sisa_s"] % 3600) // 60
-                await interaction.response.send_message(f"⏰ Sabar bro, daily lo baru bisa diklaim lagi dalam **{h} jam {m} menit**.", ephemeral=True)
-                return
-            confirm_txt = (
-                f"{emoji('daily')} Daily diklaim! +{result['base_reward']} (base) + {result['streak_bonus']} (streak) = "
-                f"**{result['total_reward']} {emoji('coin')}**. Streak: {result['streak']} hari 🔥"
-            )
-        else:
-            newly = claim_ready_quests(uid)
-            if not newly:
-                await interaction.response.send_message("Belum ada quest yang siap diklaim tuh bro, lanjut mancing/vote dulu!", ephemeral=True)
-                return
-            total_coins = sum(q["reward_coins"] for q in newly)
-            rods_gotten = [q["reward_rod"] for q in newly if q["reward_rod"]]
-            confirm_txt = f"🎉 Berhasil klaim **{len(newly)} quest**! Total +{total_coins} {emoji('coin')}"
-            if rods_gotten:
-                confirm_txt += f" + gratis: {', '.join(rods_gotten)}"
-
-        self._build()
-        await interaction.response.edit_message(view=self)
-        try:
-            await interaction.followup.send(confirm_txt, ephemeral=True)
-        except Exception:
-            pass
 
 class ShopBuyView(discord.ui.LayoutView):
     def __init__(self, user_id):
@@ -3084,6 +3443,37 @@ async def check_coins(ctx):
         f"**{ctx.author.display_name}** punya **{udata['coins']} koin** {emoji('coin')}"
     ))
 
+# --- Gift Coin (Owner Only) ---
+@bot.command(name="givecoin", aliases=["giftcoin", "addcoin", "kasihkoin"])
+async def givecoin_cmd(ctx, member: discord.Member = None, amount: int = None):
+    """Owner bot kasih koin gratis ke user lain."""
+    if ctx.author.id != OWNER_ID:
+        await ctx.reply(view=panel("❌ No Permission!", "Cuma Owner Bot yang bisa kasih koin gratis!"))
+        return
+    if member is None or amount is None or amount <= 0:
+        await ctx.reply(view=panel(
+            "⚙️ Cara Pakai",
+            "`!Doom givecoin @user <jumlah>` — Kasih koin gratis ke user (jumlah harus > 0)."
+        ))
+        return
+    uid   = str(member.id)
+    udata = get_user_fishing(uid)
+    udata["coins"] += amount
+    save_user_fishing(uid, udata)
+    await ctx.reply(view=panel(
+        f"{emoji('success')} Koin Dikirim!",
+        f"**{amount}** {emoji('coin')} berhasil dikasih ke {member.mention}!\n"
+        f"Total koin dia sekarang: **{udata['coins']}** {emoji('coin')}"
+    ))
+    try:
+        await member.send(view=panel(
+            f"{emoji('coin')} Lo Dapet Koin Gratis!",
+            f"Owner bot ngasih lo **{amount}** {emoji('coin')} koin gratis!\n"
+            f"Total koin lo sekarang: **{udata['coins']}** {emoji('coin')}"
+        ))
+    except Exception:
+        pass
+
 # --- Warn ---
 @bot.command(name="warn", aliases=["peringatan"])
 @commands.has_permissions(manage_messages=True)
@@ -3820,13 +4210,12 @@ async def daily_cmd(ctx):
 
 @bot.command(name="quest", aliases=["quests", "misi"])
 async def quest_cmd(ctx):
-    """Buka panel quest log (tab Daily / Quests) + tombol Claim."""
+    """Buka panel checklist Daily/Weekly/Quests (gambar, tombol Claim)."""
     if await check_maintenance(ctx):
         return
     if await check_premium_gate(ctx, "quest"):
         return
-    view = QuestPanelView(ctx.author, tab="quests")
-    await ctx.reply(view=view)
+    await send_checklist_panel(ctx.reply, ctx.author, tab="daily")
 
 
 # ===================== NO-PREFIX COMMAND (Owner Only) =====================
@@ -3934,7 +4323,8 @@ async def help_cmd(ctx):
     if await check_maintenance(ctx):
         return
     fields = [
-        ("🎣 Fishing", f"`fish` `coins` `daily` `quest` {emoji('coin')}"),
+        ("🎣 Fishing", f"`fish` — Mancing (ikan masuk inventori)\n`coins` `daily` — Cek koin & klaim harian {emoji('coin')}\n`quest` — Panel checklist Daily/Weekly/Quests (gambar)"),
+        ("💰 Jual Ikan", "Buka `Inventori` di panel `fish` → tombol **Jual Semua** atau dropdown buat jual 1 jenis ikan"),
         ("🎰 Spin Wheel", "`spin` / `/spin` — Putar pake koin, siapa tau dapet rod langka!"),
         ("🧠 Tebak-Tebakan", "`tebak` `addtebak` `listtebak` `removetebak` | `/tebak` (Arena) `/tambahsoal`"),
         ("⚠️ Mod", "`warn` `warns` `kick` `ban` `timeout` `move` `clear`"),
@@ -3949,7 +4339,8 @@ async def help_cmd(ctx):
             "👑 Owner Only",
             "`noprefix add/remove/list @user` — Kasih/cabut akses command tanpa prefix\n"
             "`setemoji <key> <emoji>` — Ganti emoji bot pakai emoji custom server\n"
-            "`setmaintenancechannel #channel` — Pilih channel notif maintenance"
+            "`setmaintenancechannel #channel` — Pilih channel notif maintenance\n"
+            "`givecoin @user <jumlah>` — Kasih koin gratis ke user"
         ))
     await ctx.reply(view=panel(
         "📖 StartDoom — Help", "Your complete multipurpose server bot!",
@@ -4418,6 +4809,33 @@ async def slash_coins(interaction: discord.Interaction):
         ephemeral=True
     )
 
+@tree.command(name="givecoin", description="Owner: kasih koin gratis ke user lain")
+@app_commands.describe(member="User yang mau dikasih koin", amount="Jumlah koin (> 0)")
+async def slash_givecoin(interaction: discord.Interaction, member: discord.Member, amount: int):
+    if interaction.user.id != OWNER_ID:
+        await interaction.response.send_message(view=panel("❌ No Permission!", "Cuma Owner Bot yang bisa kasih koin gratis!"), ephemeral=True)
+        return
+    if amount <= 0:
+        await interaction.response.send_message(view=panel("❌ Jumlah Gak Valid", "Jumlah koin harus lebih dari 0!"), ephemeral=True)
+        return
+    uid   = str(member.id)
+    udata = get_user_fishing(uid)
+    udata["coins"] += amount
+    save_user_fishing(uid, udata)
+    await interaction.response.send_message(view=panel(
+        f"{emoji('success')} Koin Dikirim!",
+        f"**{amount}** {emoji('coin')} berhasil dikasih ke {member.mention}!\n"
+        f"Total koin dia sekarang: **{udata['coins']}** {emoji('coin')}"
+    ))
+    try:
+        await member.send(view=panel(
+            f"{emoji('coin')} Lo Dapet Koin Gratis!",
+            f"Owner bot ngasih lo **{amount}** {emoji('coin')} koin gratis!\n"
+            f"Total koin lo sekarang: **{udata['coins']}** {emoji('coin')}"
+        ))
+    except Exception:
+        pass
+
 @tree.command(name="leaderboard", description="Lihat leaderboard koin terbanyak")
 async def slash_leaderboard(interaction: discord.Interaction):
     if await check_premium_gate_slash(interaction, "leaderboard"): return
@@ -4460,11 +4878,10 @@ async def slash_daily(interaction: discord.Interaction):
         color=0x00FF88
     ))
 
-@tree.command(name="quest", description="Buka panel quest log (Daily / Quests) + klaim reward")
+@tree.command(name="quest", description="Buka panel checklist Daily/Weekly/Quests (gambar) + klaim reward")
 async def slash_quest(interaction: discord.Interaction):
     if await check_premium_gate_slash(interaction, "quest"): return
-    view = QuestPanelView(interaction.user, tab="quests")
-    await interaction.response.send_message(view=view)
+    await send_checklist_panel(interaction.response.send_message, interaction.user, tab="daily")
 
 @tree.command(name="noprefix", description="Owner: atur akses no-prefix user lain")
 @app_commands.describe(action="add / remove / list", member="User yang mau diatur")
@@ -4690,6 +5107,7 @@ async def claimvote_cmd(ctx):
     udata  = get_user_fishing(uid)
     udata["coins"] += reward
     save_user_fishing(uid, udata)
+    bump_weekly(uid, "vote", 1)
 
     # Aktifkan vote bonus fishing
     activate_vote_bonus(uid)
