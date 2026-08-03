@@ -85,14 +85,16 @@ tree = bot.tree
 
 # ===================== FISHING DATA (Default - bisa di-override dari JSON) =====================
 DEFAULT_FISHES = [
-    {"name": "Ikan Lele",     "sell_price": 15,   "luck": 35.0, "emoji": "🐟"},
-    {"name": "Ikan Mas",      "sell_price": 25,   "luck": 30.0, "emoji": "🐠"},
-    {"name": "Ikan Gurame",   "sell_price": 40,   "luck": 15.0, "emoji": "🐡"},
-    {"name": "Ikan Salmon",   "sell_price": 60,   "luck": 10.0, "emoji": "🐟"},
+    {"name": "Ikan Lele",     "sell_price": 15,   "luck": 32.0, "emoji": "🐟"},
+    {"name": "Ikan Mas",      "sell_price": 25,   "luck": 26.0, "emoji": "🐠"},
+    {"name": "Ikan Gurame",   "sell_price": 40,   "luck": 14.0, "emoji": "🐡"},
+    {"name": "Ikan Salmon",   "sell_price": 60,   "luck": 9.0,  "emoji": "🐟"},
     {"name": "Ikan Tuna",     "sell_price": 100,  "luck": 5.0,  "emoji": "🐟"},
-    {"name": "Ikan Hiu",      "sell_price": 200,  "luck": 2.5,  "emoji": "🦈"},
-    {"name": "Ikan Duyung",   "sell_price": 500,  "luck": 1.5,  "emoji": "🧜"},
-    {"name": "Ikan Naga",     "sell_price": 1000, "luck": 0.5,  "emoji": "🐉"},
+    {"name": "Ikan Hiu",      "sell_price": 200,  "luck": 2.2,  "emoji": "🦈"},
+    {"name": "Ikan Duyung",   "sell_price": 500,  "luck": 0.9,  "emoji": "🧜"},
+    {"name": "Ikan Naga",     "sell_price": 1200, "luck": 0.35, "emoji": "🐉"},
+    {"name": "Ikan Phoenix",  "sell_price": 3000, "luck": 0.08, "emoji": "🔥"},
+    {"name": "Ikan Kraken",   "sell_price": 6000, "luck": 0.015,"emoji": "🐙"},
     {"name": "Sampah",        "sell_price": 0,    "luck": 0.0,  "emoji": "🗑️"},  # luck 0 = sampah slot khusus
 ]
 
@@ -114,16 +116,22 @@ DEFAULT_BAITS = [
 ]
 
 # Rarity tier berdasarkan luck %
-# luck >= 20%  → common
-# 10-20%       → uncommon
-# 3-10%        → rare
-# < 3%         → legendary
+# luck >= 20%    → common
+# 9-20%          → uncommon
+# 3-9%           → rare
+# 0.3-3%         → epic
+# 0.05-0.3%      → legendary
+# < 0.05%        → mythic   (SUSAH BANGET, ini tier paling langka)
 def get_rarity_from_luck(luck: float) -> str:
     if luck <= 0:
         return "trash"
-    elif luck < 3.0:
+    elif luck < 0.05:
+        return "mythic"
+    elif luck < 0.3:
         return "legendary"
-    elif luck < 10.0:
+    elif luck < 3.0:
+        return "epic"
+    elif luck < 9.0:
         return "rare"
     elif luck < 20.0:
         return "uncommon"
@@ -131,18 +139,22 @@ def get_rarity_from_luck(luck: float) -> str:
         return "common"
 
 RARITY_LABELS = {
+    "mythic":    "MYTHIC",
     "legendary": "LEGENDARY",
+    "epic":      "Epic",
     "rare":      "Rare",
     "uncommon":  "Uncommon",
     "common":    "Common",
     "trash":     "Trash",
 }
 RARITY_COLORS = {
+    "mythic":    0xE91E9C,
     "legendary": 0xFFD700,
-    "rare":      0x9B59B6,
-    "uncommon":  0x3498DB,
+    "epic":      0x9B59B6,
+    "rare":      0x3498DB,
+    "uncommon":  0x2ECC71,
     "common":    DARK_RED,
-    "trash":     0x95A5A6,
+    "trash":     0x6B6B6B,
 }
 
 def get_rarity_display(rarity: str):
@@ -250,16 +262,31 @@ def get_user_fishing(user_id: str):
     uid  = str(user_id)
     if uid not in data:
         _, rods, baits = get_fishing_config()
+        starter_rod = rods[0]["name"] if rods else "Pancing Bambu"
         data[uid] = {
             "coins": 100,
-            "rod": rods[0]["name"] if rods else "Pancing Bambu",
+            "rod": starter_rod,
+            "owned_rods": [starter_rod],
             "bait": {baits[0]["name"]: 3} if baits else {},
+            "equipped_bait": baits[0]["name"] if baits else None,
             "inventory": [],
             "total_catch": 0,
             "last_fish": 0,
             "claimed_quests": [],
         }
         save_fishing_data(data)
+    else:
+        # Migrasi otomatis buat user lama yang datanya dibuat sebelum
+        # sistem Equipment ada (belum punya owned_rods/equipped_bait).
+        changed = False
+        if "owned_rods" not in data[uid]:
+            data[uid]["owned_rods"] = [data[uid].get("rod", "Pancing Bambu")]
+            changed = True
+        if "equipped_bait" not in data[uid]:
+            data[uid]["equipped_bait"] = None
+            changed = True
+        if changed:
+            save_fishing_data(data)
     return data[uid]
 
 def save_user_fishing(user_id: str, udata: dict):
@@ -616,17 +643,17 @@ def ck_font(weight: str, size: int) -> ImageFont.FreeTypeFont:
             _FONT_CACHE[key] = ImageFont.load_default()
     return _FONT_CACHE[key]
 
-CK_BG          = (16, 15, 26)
-CK_CARD        = (26, 24, 38)
-CK_CARD_BORDER = (40, 37, 56)
-CK_ROW_BG      = (33, 31, 48)
-CK_ROW_DONE_BG = (24, 30, 26)
-CK_ACCENT      = (124, 92, 255)
-CK_ACCENT_2    = (90, 200, 130)
-CK_TEXT_MAIN   = (235, 234, 240)
-CK_TEXT_DIM    = (150, 147, 168)
-CK_TEXT_DONE   = (110, 130, 115)
-CK_BAR_BG      = (52, 49, 70)
+CK_BG          = (13, 9, 9)
+CK_CARD        = (24, 16, 16)
+CK_CARD_BORDER = (64, 24, 24)
+CK_ROW_BG      = (34, 20, 20)
+CK_ROW_DONE_BG = (20, 28, 21)
+CK_ACCENT      = (178, 34, 34)
+CK_ACCENT_2    = (95, 200, 130)
+CK_TEXT_MAIN   = (240, 232, 230)
+CK_TEXT_DIM    = (175, 140, 138)
+CK_TEXT_DONE   = (120, 150, 125)
+CK_BAR_BG      = (58, 30, 30)
 CK_GOLD        = (240, 190, 90)
 CK_WIDTH       = 460
 
@@ -780,6 +807,60 @@ def render_checklist_card(tab: str, username: str, balance: int, tasks: list, re
     return buf
 
 
+def render_catch_thumbnail(fish_name: str, rarity: str) -> io.BytesIO:
+    """Card kecil (thumbnail) buat 1 hasil tangkapan, warna & label sesuai
+    rarity biar user langsung ngeh dapet apa dari sekali liat, gak perlu
+    baca teks dulu. Dipasang di Section accessory Thumbnail panel Mancing."""
+    _, color = get_rarity_display(rarity)
+    rgb = ((color >> 16) & 255, (color >> 8) & 255, color & 255)
+    W = H = 240
+    img = Image.new("RGB", (W, H), (18, 13, 13))
+    d = ImageDraw.Draw(img)
+
+    _ck_rounded(d, (0, 0, W, H), radius=28, fill=rgb)
+    pad = 10
+    _ck_rounded(d, (pad, pad, W - pad, H - pad), radius=22, fill=(20, 15, 15))
+
+    label = RARITY_LABELS.get(rarity, "Common").upper()
+    lfnt  = ck_font("Bold", 20)
+    lbbox = d.textbbox((0, 0), label, font=lfnt)
+    lw, lh = lbbox[2] - lbbox[0], lbbox[3] - lbbox[1]
+    pill_pad_x, pill_pad_y = 16, 8
+    pill_w, pill_h = lw + pill_pad_x * 2, lh + pill_pad_y * 2
+    px, py = (W - pill_w) / 2, 26
+    _ck_rounded(d, (px, py, px + pill_w, py + pill_h), radius=pill_h / 2, fill=rgb)
+    d.text((px + pill_pad_x - lbbox[0], py + pill_pad_y - lbbox[1]), label, font=lfnt, fill=(255, 255, 255))
+
+    nfnt  = ck_font("SemiBold", 22)
+    words = fish_name.split()
+    lines, cur = [], ""
+    for w in words:
+        test = (cur + " " + w).strip()
+        if d.textbbox((0, 0), test, font=nfnt)[2] > W - 40 and cur:
+            lines.append(cur)
+            cur = w
+        else:
+            cur = test
+    if cur:
+        lines.append(cur)
+    line_h  = nfnt.size + 8
+    total_h = len(lines) * line_h
+    ny = H / 2 - total_h / 2 + 8
+    for line in lines:
+        bbox = d.textbbox((0, 0), line, font=nfnt)
+        lw2  = bbox[2] - bbox[0]
+        d.text((W / 2 - lw2 / 2 - bbox[0], ny), line, font=nfnt, fill=(240, 235, 232))
+        ny += line_h
+
+    strip_h = 14
+    _ck_rounded(d, (pad, H - pad - strip_h, W - pad, H - pad), radius=8, fill=rgb)
+
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    buf.seek(0)
+    return buf
+
+
 class ChecklistPanelView(discord.ui.View):
     """View interaktif Daily/Weekly/Quests. Tiap pindah tab, gambar card-nya
     di-generate ulang lewat render_checklist_card() dan dikirim sebagai
@@ -891,7 +972,9 @@ DEFAULT_EMOJIS = {
     "fish":      "🎣",
     "success":   "✅",
     "fail":      "❌",
+    "mythic":    "🌈",
     "legendary": "⭐",
+    "epic":      "🟣",
     "rare":      "💎",
     "uncommon":  "🔵",
     "common":    "⚪",
@@ -1085,7 +1168,7 @@ TRANSLATIONS: dict = {
         "ja":      "{star} {rarity} ゲット！",
     },
     "fish_desc_rare": {
-        "id_gaul": "**{name}** dapet ikan **LANGKA** bro!\n\n{emoji} **{fish}**\n🍀 Luck: **{luck}%**\n💰 Harga jual: **+{coins} koin**{bonus_txt} (Total: {total})\n🎣 Rod: **{rod}**\n{bait_txt}",
+        "id_gaul": "**{name}** dapet ikan **LANGKA** bro!\n\n{emoji} **{fish}**\n🍀 Luck: **{luck}%**\n💰 Harga jual: **+{coins} koin**{bonus_txt} (Total: {total})\n{E_FISH} Rod: **{rod}**\n{bait_txt}",
         "id":       "**{name}** dapet ikan **LANGKA** bro!\n\n{emoji} **{fish}**\n🍀 Luck: **{luck}%**\n💰 Harga jual: **+{coins} koin**{bonus_txt} (Total: {total})\n🎣 Rod: **{rod}**\n{bait_txt}",
         "en":      "**{name}** caught a **RARE** fish!\n\n{emoji} **{fish}**\n🍀 Luck: **{luck}%**\n💰 Sell price: **+{coins} coins**{bonus_txt} (Total: {total})\n🎣 Rod: **{rod}**\n{bait_txt}",
         "de":      "**{name}** hat einen **SELTENEN** Fisch gefangen!\n\n{emoji} **{fish}**\n🍀 Glück: **{luck}%**\n💰 Verkaufspreis: **+{coins} Münzen**{bonus_txt} (Gesamt: {total})\n🎣 Angel: **{rod}**\n{bait_txt}",
@@ -1103,7 +1186,7 @@ TRANSLATIONS: dict = {
         "ja":      "{emoji} 釣り結果",
     },
     "fish_desc_normal": {
-        "id_gaul": "**{name}** dapet **{fish}** [{rarity}]\n🍀 Luck: {luck}%\n💰 +{coins} koin{bonus_txt} (Total: {total})\n🎣 Rod: {rod}\n{bait_txt}",
+        "id_gaul": "**{name}** dapet **{fish}** [{rarity}]\n🍀 Luck: {luck}%\n💰 +{coins} koin{bonus_txt} (Total: {total})\n{E_FISH} Rod: {rod}\n{bait_txt}",
         "id":       "**{name}** dapet **{fish}** [{rarity}]\n🍀 Luck: {luck}%\n💰 +{coins} koin{bonus_txt} (Total: {total})\n🎣 Rod: {rod}\n{bait_txt}",
         "en":      "**{name}** caught **{fish}** [{rarity}]\n🍀 Luck: {luck}%\n💰 +{coins} coins{bonus_txt} (Total: {total})\n🎣 Rod: {rod}\n{bait_txt}",
         "de":      "**{name}** hat **{fish}** gefangen [{rarity}]\n🍀 Glück: {luck}%\n💰 +{coins} Münzen{bonus_txt} (Gesamt: {total})\n🎣 Angel: {rod}\n{bait_txt}",
@@ -1112,7 +1195,7 @@ TRANSLATIONS: dict = {
         "ja":      "**{name}** が **{fish}** を釣った [{rarity}]\n🍀 ラック: {luck}%\n💰 +{coins} コイン{bonus_txt} (合計: {total})\n🎣 ロッド: {rod}\n{bait_txt}",
     },
     "fish_vote_bonus": {
-        "id_gaul": "\n🗳️ **Vote Bonus aktif! +{pct}% koin** (sisa ~{mins} mnt)",
+        "id_gaul": "\n{E_VOTE} **Vote Bonus aktif! +{pct}% koin** (sisa ~{mins} mnt)",
         "id":       "\n🗳️ **Vote Bonus aktif! +{pct}% koin** (sisa ~{mins} mnt)",
         "en":      "\n🗳️ **Vote Bonus active! +{pct}% coins** (~{mins} min left)",
         "de":      "\n🗳️ **Vote-Bonus aktiv! +{pct}% Münzen** (~{mins} Min übrig)",
@@ -1185,7 +1268,7 @@ TRANSLATIONS: dict = {
         "ja":      "🎉 正解！！！",
     },
     "tebak_correct_desc": {
-        "id_gaul": "{praise}\n\n**{user}** jawab bener!\n💰 Dapet **+{reward} koin** cuy!\n✅ Jawaban: **{answer}**\n🪙 Total koin lo: **{total}**",
+        "id_gaul": "{praise}\n\n**{user}** jawab bener!\n💰 Dapet **+{reward} koin** cuy!\n{E_SUCCESS} Jawaban: **{answer}**\n{E_COIN} Total koin lo: **{total}**",
         "id":       "{praise}\n\n**{user}** jawab bener!\n💰 Dapet **+{reward} koin** cuy!\n✅ Jawaban: **{answer}**\n🪙 Total koin lo: **{total}**",
         "en":      "**{user}** answered correctly!\n💰 Got **+{reward} coins**!\n✅ Answer: **{answer}**\n🪙 Total coins: **{total}**",
         "de":      "**{user}** hat richtig geantwortet!\n💰 **+{reward} Münzen** erhalten!\n✅ Antwort: **{answer}**\n🪙 Gesamt: **{total}**",
@@ -1204,7 +1287,7 @@ TRANSLATIONS: dict = {
     },
     # ── COINS ────────────────────────────────────────────────
     "coins_title": {
-        "id_gaul": "🪙 Koin Lo",
+        "id_gaul": "{E_COIN} Koin Lo",
         "id":       "🪙 Koin Lo",
         "en":      "🪙 Your Coins",
         "de":      "🪙 Deine Münzen",
@@ -1213,7 +1296,7 @@ TRANSLATIONS: dict = {
         "ja":      "🪙 あなたのコイン",
     },
     "coins_desc": {
-        "id_gaul": "**{user}** punya **{amount} koin** 🪙",
+        "id_gaul": "**{user}** punya **{amount} koin** {E_COIN}",
         "id":       "**{user}** punya **{amount} koin** 🪙",
         "en":      "**{user}** has **{amount} coins** 🪙",
         "de":      "**{user}** hat **{amount} Münzen** 🪙",
@@ -1223,7 +1306,7 @@ TRANSLATIONS: dict = {
     },
     # ── VOTE ─────────────────────────────────────────────────
     "vote_title": {
-        "id_gaul": "🗳️ Vote Bot di Top.gg!",
+        "id_gaul": "{E_VOTE} Vote Bot di Top.gg!",
         "id":       "🗳️ Vote Bot di Top.gg!",
         "en":      "🗳️ Vote for the Bot on Top.gg!",
         "de":      "🗳️ Stimme für den Bot auf Top.gg ab!",
@@ -1232,7 +1315,7 @@ TRANSLATIONS: dict = {
         "ja":      "🗳️ Top.gg でボットに投票！",
     },
     "vote_desc": {
-        "id_gaul": "**Support bot ini dengan vote di Top.gg!** 🔥\n\n🔗 **[Klik di sini untuk Vote]({url})**\n\n**🎁 Reward Vote:**\n• **{min} - {max} koin** langsung ke saldo lo!\n• **+{pct}% bonus coin mancing** selama **{mins} menit**!\n\n**⏰ Cooldown Claim:** {cd} jam\n\nSetelah vote, ketik `dclaimvote` untuk ambil reward! 🚀",
+        "id_gaul": "**Support bot ini dengan vote di Top.gg!** {E_STREAK}\n\n🔗 **[Klik di sini untuk Vote]({url})**\n\n**🎁 Reward Vote:**\n• **{min} - {max} koin** langsung ke saldo lo!\n• **+{pct}% bonus coin mancing** selama **{mins} menit**!\n\n**⏰ Cooldown Claim:** {cd} jam\n\nSetelah vote, ketik `dclaimvote` untuk ambil reward! 🚀",
         "id":       "**Support bot ini dengan vote di Top.gg!** 🔥\n\n🔗 **[Klik di sini untuk Vote]({url})**\n\n**🎁 Reward Vote:**\n• **{min} - {max} koin** langsung ke saldo lo!\n• **+{pct}% bonus coin mancing** selama **{mins} menit**!\n\n**⏰ Cooldown Claim:** {cd} jam\n\nSetelah vote, ketik `dclaimvote` untuk ambil reward! 🚀",
         "en":      "**Support this bot by voting on Top.gg!** 🔥\n\n🔗 **[Click here to Vote]({url})**\n\n**🎁 Vote Rewards:**\n• **{min} - {max} coins** directly to your balance!\n• **+{pct}% fishing coin bonus** for **{mins} minutes**!\n\n**⏰ Claim Cooldown:** {cd} hours\n\nAfter voting, type `dclaimvote` to claim your reward! 🚀",
         "de":      "**Unterstütze diesen Bot durch Abstimmen auf Top.gg!** 🔥\n\n🔗 **[Hier klicken zum Abstimmen]({url})**\n\n**🎁 Abstimmungsbelohnungen:**\n• **{min} - {max} Münzen** direkt auf dein Konto!\n• **+{pct}% Angel-Münzen-Bonus** für **{mins} Minuten**!\n\n**⏰ Claim-Abklingzeit:** {cd} Stunden\n\nNach dem Abstimmen tippe `dclaimvote` um deine Belohnung zu erhalten! 🚀",
@@ -1241,7 +1324,7 @@ TRANSLATIONS: dict = {
         "ja":      "**Top.gg でボットに投票してサポートしよう！** 🔥\n\n🔗 **[こちらをクリックして投票]({url})**\n\n**🎁 投票報酬:**\n• **{min} - {max} コイン** が即座に残高へ！\n• **+{pct}% 釣りコインボーナス** が **{mins} 分間** 有効！\n\n**⏰ クレームクールダウン:** {cd} 時間\n\n投票後、`dclaimvote` と入力して報酬を受け取ろう！ 🚀",
     },
     "vote_not_voted_title": {
-        "id_gaul": "❌ Belum Vote Bro!",
+        "id_gaul": "{E_FAIL} Belum Vote Bro!",
         "id":       "❌ Belum Vote Bro!",
         "en":      "❌ You Haven't Voted Yet!",
         "de":      "❌ Du hast noch nicht abgestimmt!",
@@ -1286,7 +1369,7 @@ TRANSLATIONS: dict = {
         "ja":      "🎉 投票報酬を受け取りました！",
     },
     "vote_claimed_desc": {
-        "id_gaul": "Makasih udah vote bot ini **{user}**! 🔥\n\n**💰 Koin Didapat:** +**{reward} koin**!\n**🪙 Total Koin:** {total} koin\n\n**🎣 Vote Bonus Fishing Aktif!**\n+**{pct}% coin** dari mancing selama **{mins} menit**\n(Aktif sampai jam **{until}**) 🚀\n\n**Total Vote Lo:** {count} kali 🏆\n\nBisa claim lagi dalam **{cd} jam**!",
+        "id_gaul": "Makasih udah vote bot ini **{user}**! {E_STREAK}\n\n**💰 Koin Didapat:** +**{reward} koin**!\n**{E_COIN} Total Koin:** {total} koin\n\n**{E_FISH} Vote Bonus Fishing Aktif!**\n+**{pct}% coin** dari mancing selama **{mins} menit**\n(Aktif sampai jam **{until}**) 🚀\n\n**Total Vote Lo:** {count} kali 🏆\n\nBisa claim lagi dalam **{cd} jam**!",
         "id":       "Makasih udah vote bot ini **{user}**! 🔥\n\n**💰 Koin Didapat:** +**{reward} koin**!\n**🪙 Total Koin:** {total} koin\n\n**🎣 Vote Bonus Fishing Aktif!**\n+**{pct}% coin** dari mancing selama **{mins} menit**\n(Aktif sampai jam **{until}**) 🚀\n\n**Total Vote Lo:** {count} kali 🏆\n\nBisa claim lagi dalam **{cd} jam**!",
         "en":      "Thanks for voting **{user}**! 🔥\n\n**💰 Coins Received:** +**{reward} coins**!\n**🪙 Total Coins:** {total} coins\n\n**🎣 Vote Fishing Bonus Active!**\n+**{pct}% coins** from fishing for **{mins} minutes**\n(Active until **{until}**) 🚀\n\n**Your Total Votes:** {count} times 🏆\n\nCan claim again in **{cd} hours**!",
         "de":      "Danke für deine Stimme **{user}**! 🔥\n\n**💰 Münzen erhalten:** +**{reward} Münzen**!\n**🪙 Gesamt-Münzen:** {total} Münzen\n\n**🎣 Vote-Angel-Bonus aktiv!**\n+**{pct}% Münzen** beim Angeln für **{mins} Minuten**\n(Aktiv bis **{until}**) 🚀\n\n**Deine Gesamtabstimmungen:** {count} Mal 🏆\n\nKann wieder beansprucht werden in **{cd} Stunden**!",
@@ -1302,14 +1385,26 @@ TRANSLATIONS: dict = {
 # pemanggilan t() di seluruh kode lama gak perlu diubah satu-satu.
 
 def t(key: str, user_id=None, **kwargs) -> str:
-    """Ambil teks berdasarkan key. Bahasa selalu id_gaul (fixed)."""
+    """Ambil teks berdasarkan key. Bahasa selalu id_gaul (fixed).
+    Semua teks otomatis dapet token emoji (E_COIN, E_FISH, dst) dari
+    emoji_config, jadi setemoji ke-reflect di semua teks bot, bukan cuma
+    yang secara eksplisit manggil emoji()."""
     entry = TRANSLATIONS.get(key, {})
     text  = entry.get("id_gaul") or entry.get("id") or entry.get("en") or key
-    if kwargs:
-        try:
-            text = text.format(**kwargs)
-        except (KeyError, ValueError):
-            pass
+    emoji_tokens = {
+        "E_COIN": emoji('coin'), "E_FISH": emoji('fish'),
+        "E_SUCCESS": emoji('success'), "E_FAIL": emoji('fail'),
+        "E_QUEST": emoji('quest'), "E_DAILY": emoji('daily'),
+        "E_VOTE": emoji('vote'), "E_STREAK": emoji('streak'),
+        "E_LEGENDARY": emoji('legendary'), "E_RARE": emoji('rare'),
+        "E_UNCOMMON": emoji('uncommon'), "E_COMMON": emoji('common'),
+        "E_TRASH": emoji('trash'),
+    }
+    merged = {**emoji_tokens, **kwargs}
+    try:
+        text = text.format(**merged)
+    except (KeyError, ValueError):
+        pass
     return text
 
 fishing_cooldowns   = {}
@@ -2063,7 +2158,8 @@ class SellFishSelect(discord.ui.Select):
 
 
 class InventoryView(discord.ui.LayoutView):
-    """Panel inventori + tombol/dropdown buat jual ikan (sistem manual sell)."""
+    """Panel inventori + tombol/dropdown buat jual ikan (sistem manual sell)
+    + tombol Equipment buat ganti rod/umpan yang dipakai."""
     def __init__(self, user_id: int, note: str | None = None):
         super().__init__(timeout=120)
         self.user_id = user_id
@@ -2077,31 +2173,53 @@ class InventoryView(discord.ui.LayoutView):
         inv_count = {}
         for item in inv:
             inv_count[item] = inv_count.get(item, 0) + 1
-        est_total = sum(_fish_sell_price(n) * q for n, q in inv_count.items())
-        inv_text  = "\n".join([f"• {k}: x{v} (~{_fish_sell_price(k) * v} 🪙)" for k, v in inv_count.items()]) if inv_count else "Inventori kosong, ayo mancing dulu!"
-        bait_text = "\n".join([f"{k}: x{v}" for k, v in udata.get('bait', {}).items()]) or "Habis!"
+        est_total  = sum(_fish_sell_price(n) * q for n, q in inv_count.items())
+        coin_e     = emoji('coin')
+        inv_text   = "\n".join([f"• {k} `x{v}` — ~{_fish_sell_price(k) * v} {coin_e}" for k, v in inv_count.items()]) if inv_count else "_Inventori kosong, ayo mancing dulu!_"
+        bait_text  = "\n".join([f"• {k} `x{v}`" for k, v in udata.get('bait', {}).items()]) or "_Habis!_"
+        n_rods     = len(udata.get("owned_rods") or [udata.get("rod", "-")])
+
         desc = (
-            f"**Koin:** {udata['coins']} 🪙\n**Rod:** {udata['rod']}\n**Total Tangkapan:** {udata['total_catch']}\n\n"
-            f"**🐟 Ikan (belum dijual, estimasi total: {est_total} 🪙):**\n{inv_text}\n\n**🪱 Umpan:**\n{bait_text}"
+            f"### 🎒 Inventori\n"
+            f"**{coin_e} Koin:** {udata['coins']} | **Total Tangkapan:** {udata['total_catch']}\n"
+            f"**{emoji('fish')} Rod dipakai:** {udata['rod']} _(punya {n_rods} rod)_ | "
+            f"**🪱 Umpan dipakai:** {udata.get('equipped_bait') or '-'}"
         )
         if self.note:
             desc = f"{self.note}\n\n{desc}"
 
         container = discord.ui.Container(accent_colour=DARK_RED)
-        container.add_item(discord.ui.TextDisplay(f"### 🎒 Inventori\n{desc}"))
+        container.add_item(discord.ui.TextDisplay(desc))
+        container.add_item(discord.ui.Separator())
+        container.add_item(discord.ui.TextDisplay(
+            f"**🐟 Ikan** _(belum dijual, estimasi total: {est_total} {coin_e})_\n{inv_text}"
+        ))
+        container.add_item(discord.ui.Separator(spacing=discord.SeparatorSpacing.small))
+        container.add_item(discord.ui.TextDisplay(f"**🪱 Umpan dimiliki**\n{bait_text}"))
+        container.add_item(discord.ui.Separator())
+
+        row = discord.ui.ActionRow()
+        equip_btn = discord.ui.Button(label="Equipment", emoji="⚔️", style=discord.ButtonStyle.primary)
+        equip_btn.callback = self.open_equipment
+        row.add_item(equip_btn)
         if inv_count:
-            container.add_item(discord.ui.Separator())
-            row = discord.ui.ActionRow()
-            sell_all_btn = discord.ui.Button(label="💰 Jual Semua Ikan", style=discord.ButtonStyle.success)
+            sell_all_btn = discord.ui.Button(label="Jual Semua Ikan", emoji=coin_e, style=discord.ButtonStyle.success)
             sell_all_btn.callback = self.sell_all
             row.add_item(sell_all_btn)
-            container.add_item(row)
+        container.add_item(row)
+
+        if inv_count:
             # Select HARUS dibungkus ActionRow, gak boleh nempel langsung ke
             # Container/View Components V2 (Discord nolak dengan error 400
             # "components.X: type must be one of (1,9,10,12,13,14,17)").
-            sell_select_row = discord.ui.ActionRow(SellFishSelect(self.user_id, inv_count))
-            container.add_item(sell_select_row)
+            container.add_item(discord.ui.ActionRow(SellFishSelect(self.user_id, inv_count)))
         self.add_item(container)
+
+    async def open_equipment(self, interaction: discord.Interaction):
+        if interaction.user.id != self.user_id:
+            await interaction.response.send_message("❌ Privasi dong!", ephemeral=True)
+            return
+        await interaction.response.send_message(view=EquipmentView(self.user_id), ephemeral=True)
 
     async def sell_all(self, interaction: discord.Interaction):
         if interaction.user.id != self.user_id:
@@ -2111,7 +2229,7 @@ class InventoryView(discord.ui.LayoutView):
         if result["count"] == 0:
             await interaction.response.send_message("⚠️ Inventori ikan lo udah kosong!", ephemeral=True)
             return
-        self.note = f"✅ Terjual **{result['count']}x ikan** → +**{result['total']}** 🪙!"
+        self.note = f"{emoji('success')} Terjual **{result['count']}x ikan** → +**{result['total']}** {emoji('coin')}!"
         self._build()
         await interaction.response.edit_message(view=self)
 
@@ -2122,12 +2240,30 @@ class FishingMainView(discord.ui.LayoutView):
         super().__init__(timeout=120)
         self.user_id  = user_id
         self.body_text = body_text or f"Hey <@{user_id}>! Choose your action:"
+        self.last_catch = None  # (fish_dict, rarity) — dipakai buat render thumbnail
         self._build()
+
+    def _render_catch_file(self):
+        """Generate thumbnail PNG rarity-colored buat tangkapan terakhir (kalau ada)."""
+        if not self.last_catch:
+            return None
+        caught, rarity = self.last_catch
+        buf = render_catch_thumbnail(caught["name"], rarity)
+        return discord.File(buf, filename="catch.png")
 
     def _build(self):
         self.clear_items()
         container = discord.ui.Container(accent_colour=DARK_RED)
-        container.add_item(discord.ui.TextDisplay(f"### {emoji('fish')} StartDoom Fishing\n{self.body_text}"))
+        header_text = f"### {emoji('fish')} StartDoom Fishing\n{self.body_text}"
+        if self.last_catch:
+            # Ada tangkapan terakhir → tampilin sebagai thumbnail biar langsung
+            # keliatan dapet apa dari warnanya (bukan cuma teks rarity).
+            container.add_item(discord.ui.Section(
+                discord.ui.TextDisplay(header_text),
+                accessory=discord.ui.Thumbnail("attachment://catch.png")
+            ))
+        else:
+            container.add_item(discord.ui.TextDisplay(header_text))
         container.add_item(discord.ui.Separator())
 
         fish_btn = discord.ui.Button(label="Mancing", emoji=emoji('fish'), style=discord.ButtonStyle.danger)
@@ -2167,16 +2303,25 @@ class FishingMainView(discord.ui.LayoutView):
         fishing_cooldowns[uid] = now
         udata = get_user_fishing(uid)
 
-        # Ambil bait pertama yang ada
-        bait_list  = udata.get("bait", {})
-        used_bait  = None
-        for bname, qty in list(bait_list.items()):
-            if qty > 0:
-                bait_list[bname] -= 1
-                if bait_list[bname] <= 0:
-                    del bait_list[bname]
-                used_bait = bname
-                break
+        # Pakai umpan yang di-equip dulu (dari panel Equipment), fallback ke
+        # umpan pertama yang tersedia kalau belum equip / stoknya udah habis.
+        bait_list = udata.get("bait", {})
+        used_bait = None
+        equipped  = udata.get("equipped_bait")
+        if equipped and bait_list.get(equipped, 0) > 0:
+            bait_list[equipped] -= 1
+            if bait_list[equipped] <= 0:
+                del bait_list[equipped]
+                udata["equipped_bait"] = None  # stok habis, auto-unequip
+            used_bait = equipped
+        else:
+            for bname, qty in list(bait_list.items()):
+                if qty > 0:
+                    bait_list[bname] -= 1
+                    if bait_list[bname] <= 0:
+                        del bait_list[bname]
+                    used_bait = bname
+                    break
         udata["bait"] = bait_list
 
         caught, rarity = do_fish_roll(udata.get("rod", "Pancing Bambu"), used_bait)
@@ -2195,27 +2340,30 @@ class FishingMainView(discord.ui.LayoutView):
 
         bait_txt  = (t("fish_bait", uid_fish, bait=used_bait)
                      if used_bait else t("fish_no_bait", uid_fish))
-        star      = "🌟" if rarity == "legendary" else "💎"
-        sell_hint = f"💰 Nilai jual: ~**{est_price} koin** (belum kejual, cek `Inventori` buat jual!)"
+        star      = {"mythic": "🌈", "legendary": "🌟", "epic": "💎"}.get(rarity, "✨")
+        sell_hint = f"{emoji('coin')} Nilai jual: ~**{est_price} koin** (belum kejual, cek `Inventori` buat jual!)"
 
-        if rarity in ("legendary", "rare"):
+        self.last_catch = (caught, rarity)  # buat generate thumbnail gambar
+
+        if rarity in ("mythic", "legendary", "epic", "rare"):
             title = t("fish_title_rare", uid_fish, star=star, rarity=rarity_label)
             desc  = (
                 f"**{interaction.user.display_name}** dapet ikan **LANGKA** bro!\n\n"
                 f"{caught['emoji']} **{caught['name']}**\n🍀 Luck: **{luck_pct}%**\n{sell_hint}\n"
-                f"🎣 Rod: **{udata['rod']}**\n{bait_txt}"
+                f"{emoji('fish')} Rod: **{udata['rod']}**\n{bait_txt}"
                 f"\n\n-# {t('fish_rare_footer', uid_fish)}"
             )
         else:
             title = t("fish_title_normal", uid_fish, emoji=caught["emoji"])
             desc  = (
                 f"**{interaction.user.display_name}** dapet **{caught['name']}** [{rarity_label}]\n"
-                f"🍀 Luck: **{luck_pct}%**\n{sell_hint}\n🎣 Rod: **{udata['rod']}**\n{bait_txt}"
+                f"🍀 Luck: **{luck_pct}%**\n{sell_hint}\n{emoji('fish')} Rod: **{udata['rod']}**\n{bait_txt}"
             )
 
         self.body_text = f"**{title}**\n{desc}"
         self._build()
-        await interaction.response.edit_message(view=self)
+        catch_file = self._render_catch_file()
+        await interaction.response.edit_message(view=self, attachments=[catch_file] if catch_file else [])
 
         # Cek kalau ada quest mancing yang baru "siap diklaim" (belum auto-reward,
         # user harus klaim manual lewat dquest)
@@ -2264,7 +2412,7 @@ class SpinWheelView(discord.ui.LayoutView):
         container = discord.ui.Container(accent_colour=DARK_RED)
         container.add_item(discord.ui.TextDisplay(
             f"### 🎰 StartDoom Spin Wheel\n{self.body_text}\n\n"
-            f"**Biaya sekali putar:** {cost} 🪙 | **Koin lo:** {udata['coins']} 🪙"
+            f"**Biaya sekali putar:** {cost} {emoji('coin')} | **Koin lo:** {udata['coins']} {emoji('coin')}"
         ))
         container.add_item(discord.ui.Separator())
 
@@ -2289,7 +2437,7 @@ class SpinWheelView(discord.ui.LayoutView):
         udata = get_user_fishing(uid)
         if udata["coins"] < cost:
             await interaction.response.send_message(
-                f"❌ Koin lo kurang! Butuh **{cost}** 🪙, koin lo cuma **{udata['coins']}** 🪙. Mancing/jual ikan dulu ya!",
+                f"{emoji('fail')} Koin lo kurang! Butuh **{cost}** {emoji('coin')}, koin lo cuma **{udata['coins']}** {emoji('coin')}. Mancing/jual ikan dulu ya!",
                 ephemeral=True
             )
             return
@@ -2319,12 +2467,12 @@ class ShopBuyView(discord.ui.LayoutView):
         fishes, rods, baits = get_fishing_config()
         udata = get_user_fishing(str(user_id))
 
-        rod_text  = "\n".join([f"{r['emoji']} **{r['name']}** - {r['price']} 🪙 (Tier {r['tier']}, +{r['luck_bonus']}% luck)" for r in rods])
-        bait_text = "\n".join([f"{b['emoji']} **{b['name']}** - {b['price']} 🪙 (+{b['luck_bonus']}% luck)" for b in baits])
+        rod_text  = "\n".join([f"{r['emoji']} **{r['name']}** - {r['price']} {emoji('coin')} (Tier {r['tier']}, +{r['luck_bonus']}% luck)" for r in rods])
+        bait_text = "\n".join([f"{b['emoji']} **{b['name']}** - {b['price']} {emoji('coin')} (+{b['luck_bonus']}% luck)" for b in baits])
 
         container = discord.ui.Container(accent_colour=DARK_RED)
         container.add_item(discord.ui.TextDisplay(
-            f"### 🏪 Fishing Shop\n**Koin lo:** {udata['coins']} 🪙\n\n"
+            f"### 🏪 Fishing Shop\n**Koin lo:** {udata['coins']} {emoji('coin')}\n\n"
             f"**🎣 Rod:**\n{rod_text}\n\n**🪱 Umpan:**\n{bait_text}"
         ))
         container.add_item(discord.ui.Separator())
@@ -2362,12 +2510,21 @@ class ShopBuyView(discord.ui.LayoutView):
             return
         udata = get_user_fishing(str(interaction.user.id))
         if udata["coins"] < rod["price"]:
-            await interaction.response.send_message(f"❌ Koin kurang! Butuh {rod['price']} 🪙", ephemeral=True)
+            await interaction.response.send_message(f"❌ Koin kurang! Butuh {rod['price']} {emoji('coin')}", ephemeral=True)
             return
         udata["coins"] -= rod["price"]
-        udata["rod"]    = rod["name"]
+        # Rod ditambahin ke owned_rods (gak ilang rod lama), terus auto-equip
+        # rod yang baru dibeli. User bisa ganti-ganti lagi lewat Equipment.
+        owned = udata.setdefault("owned_rods", [])
+        if rod["name"] not in owned:
+            owned.append(rod["name"])
+        udata["rod"] = rod["name"]
         save_user_fishing(str(interaction.user.id), udata)
-        await interaction.response.send_message(f"✅ Beli **{rod['name']}**! Sisa koin: {udata['coins']} 🪙", ephemeral=True)
+        await interaction.response.send_message(
+            f"{emoji('success')} Beli & pasang **{rod['name']}**! Sisa koin: {udata['coins']} {emoji('coin')}\n"
+            f"-# Cek `dinv` → Equipment buat ganti-ganti rod yang lo punya.",
+            ephemeral=True
+        )
 
     async def buy_bait(self, interaction: discord.Interaction):
         if interaction.user.id != self.user_id:
@@ -2381,12 +2538,125 @@ class ShopBuyView(discord.ui.LayoutView):
             return
         udata = get_user_fishing(str(interaction.user.id))
         if udata["coins"] < bait["price"]:
-            await interaction.response.send_message(f"❌ Koin kurang! Butuh {bait['price']} 🪙", ephemeral=True)
+            await interaction.response.send_message(f"❌ Koin kurang! Butuh {bait['price']} {emoji('coin')}", ephemeral=True)
             return
         udata["coins"] -= bait["price"]
         udata.setdefault("bait", {})[bait["name"]] = udata["bait"].get(bait["name"], 0) + 5
+        # Auto-equip kalau belum ada umpan yang dipakai sama sekali
+        if not udata.get("equipped_bait"):
+            udata["equipped_bait"] = bait["name"]
         save_user_fishing(str(interaction.user.id), udata)
-        await interaction.response.send_message(f"✅ Beli **{bait['name']}** x5! Sisa koin: {udata['coins']} 🪙", ephemeral=True)
+        await interaction.response.send_message(
+            f"{emoji('success')} Beli **{bait['name']}** x5! Sisa koin: {udata['coins']} {emoji('coin')}\n"
+            f"-# Cek `dinv` → Equipment buat ganti-ganti umpan yang lo punya.",
+            ephemeral=True
+        )
+
+# ===================== EQUIPMENT SYSTEM =====================
+
+class EquipRodSelect(discord.ui.Select):
+    """Dropdown buat milih rod mana dari yang dimiliki user yang mau dipakai."""
+    def __init__(self, user_id: int, owned_rods: list, current_rod: str | None):
+        _, rods, _ = get_fishing_config()
+        rod_map = {r["name"]: r for r in rods}
+        options = []
+        for name in owned_rods[:25]:
+            r = rod_map.get(name, {})
+            desc = f"+{r.get('luck_bonus', 0)}% luck"
+            if name == current_rod:
+                desc += " • sedang dipakai"
+            options.append(discord.SelectOption(
+                label=name, value=name, description=desc,
+                emoji=r.get("emoji", emoji('fish')), default=(name == current_rod)
+            ))
+        super().__init__(placeholder="⚙️ Pilih Rod buat dipakai...", options=options, row=0)
+        self.user_id = user_id
+
+    async def callback(self, interaction: discord.Interaction):
+        if interaction.user.id != self.user_id:
+            await interaction.response.send_message("❌ Privasi dong!", ephemeral=True)
+            return
+        udata = get_user_fishing(str(self.user_id))
+        udata["rod"] = self.values[0]
+        save_user_fishing(str(self.user_id), udata)
+        await interaction.response.edit_message(
+            view=EquipmentView(self.user_id, note=f"{emoji('success')} Rod **{self.values[0]}** sekarang dipakai!")
+        )
+
+
+class EquipBaitSelect(discord.ui.Select):
+    """Dropdown buat milih umpan mana dari inventori yang mau dipakai."""
+    def __init__(self, user_id: int, bait_inv: dict, current_bait: str | None):
+        _, _, baits = get_fishing_config()
+        bait_map = {b["name"]: b for b in baits}
+        options = []
+        for name, qty in list(bait_inv.items())[:25]:
+            if qty <= 0:
+                continue
+            b = bait_map.get(name, {})
+            desc = f"x{qty} • +{b.get('luck_bonus', 0)}% luck"
+            if name == current_bait:
+                desc += " • dipakai"
+            options.append(discord.SelectOption(
+                label=name, value=name, description=desc,
+                emoji=b.get("emoji", "🪱"), default=(name == current_bait)
+            ))
+        if not options:
+            options = [discord.SelectOption(label="Belum punya umpan", value="__none__", description="Beli umpan dulu di Shop")]
+        super().__init__(placeholder="⚙️ Pilih Umpan buat dipakai...", options=options, row=1)
+        self.user_id = user_id
+
+    async def callback(self, interaction: discord.Interaction):
+        if interaction.user.id != self.user_id:
+            await interaction.response.send_message("❌ Privasi dong!", ephemeral=True)
+            return
+        if self.values[0] == "__none__":
+            await interaction.response.send_message("⚠️ Beli umpan dulu di Shop!", ephemeral=True)
+            return
+        udata = get_user_fishing(str(self.user_id))
+        udata["equipped_bait"] = self.values[0]
+        save_user_fishing(str(self.user_id), udata)
+        await interaction.response.edit_message(
+            view=EquipmentView(self.user_id, note=f"{emoji('success')} Umpan **{self.values[0]}** sekarang dipakai!")
+        )
+
+
+class EquipmentView(discord.ui.LayoutView):
+    """Panel Equipment: user pilih rod & umpan yang mau dipakai buat mancing,
+    dari semua rod/umpan yang udah pernah dia beli."""
+    def __init__(self, user_id: int, note: str | None = None):
+        super().__init__(timeout=120)
+        self.user_id = user_id
+        self.note    = note
+        self._build()
+
+    def _build(self):
+        self.clear_items()
+        udata = get_user_fishing(str(self.user_id))
+        owned_rods   = udata.get("owned_rods") or [udata.get("rod", "Pancing Bambu")]
+        current_rod  = udata.get("rod")
+        current_bait = udata.get("equipped_bait")
+        bait_inv     = udata.get("bait", {})
+
+        _, rods, baits = get_fishing_config()
+        rod_info  = next((r for r in rods if r["name"] == current_rod), {})
+        bait_info = next((b for b in baits if b["name"] == current_bait), {})
+
+        desc = (
+            f"**Rod dipakai:** {current_rod} (+{rod_info.get('luck_bonus', 0)}% luck)\n"
+            f"**Umpan dipakai:** {current_bait or '-'}"
+            + (f" (+{bait_info.get('luck_bonus', 0)}% luck)" if current_bait else "")
+            + f"\n\n*Lo punya {len(owned_rods)} rod. Pilih di dropdown buat ganti yang dipakai.*"
+        )
+        if self.note:
+            desc = f"{self.note}\n\n{desc}"
+
+        container = discord.ui.Container(accent_colour=DARK_RED)
+        container.add_item(discord.ui.TextDisplay(f"### ⚔️ Equipment\n{desc}"))
+        container.add_item(discord.ui.Separator())
+        container.add_item(discord.ui.ActionRow(EquipRodSelect(self.user_id, owned_rods, current_rod)))
+        container.add_item(discord.ui.ActionRow(EquipBaitSelect(self.user_id, bait_inv, current_bait)))
+        self.add_item(container)
 
 # ===================== FISHING SETUP PANEL (Owner Only) =====================
 
