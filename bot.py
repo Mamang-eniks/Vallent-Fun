@@ -2271,16 +2271,24 @@ class FishingMainView(discord.ui.LayoutView):
         self.last_catch = None  # (fish_dict, rarity) — dipakai buat render thumbnail
         self._build()
 
-    def _render_catch_file(self):
-        """Generate thumbnail PNG FALLBACK doang — cuma dipake kalau rarity ini
-        masih pakai emoji unicode default (belum di-custom lewat dsetemoji).
-        Kalau owner udah set custom emoji Discord, itu yang dipakai langsung
-        (lihat get_emoji_thumbnail_url), bukan gambar buatan sendiri."""
+    def _thumb_url(self):
+        """URL gambar buat thumbnail tangkapan terakhir, prioritas:
+        1. Emoji custom IKAN itu sendiri (di-set lewat dsetfishing → Edit Ikan)
+        2. Emoji custom RARITY (di-set lewat dsetemoji)
+        3. None (berarti pakai card generate fallback)"""
         if not self.last_catch:
             return None
         caught, rarity = self.last_catch
-        if get_emoji_thumbnail_url(rarity):
-            return None  # udah ada custom emoji, gak perlu generate apa-apa
+        return parse_emoji_image_url(caught.get("emoji")) or get_emoji_thumbnail_url(rarity)
+
+    def _render_catch_file(self):
+        """Generate thumbnail PNG FALLBACK doang — cuma dipake kalau ikannya
+        DAN rarity-nya masih pakai emoji unicode default (belum ada yang
+        di-custom). Kalau salah satunya udah custom, itu yang dipakai
+        langsung (lihat _thumb_url), bukan gambar buatan sendiri."""
+        if not self.last_catch or self._thumb_url():
+            return None
+        caught, rarity = self.last_catch
         buf = render_catch_thumbnail(caught["name"], rarity)
         return discord.File(buf, filename="catch.png")
 
@@ -2289,12 +2297,9 @@ class FishingMainView(discord.ui.LayoutView):
         container = discord.ui.Container(accent_colour=DARK_RED)
         header_text = f"### {emoji('fish')} StartDoom Fishing\n{self.body_text}"
         if self.last_catch:
-            # Ada tangkapan terakhir → tampilin thumbnail. Prioritas: custom
-            # emoji Discord yang udah di-set owner buat rarity ini (lewat
-            # `dsetemoji`); kalau belum di-custom, fallback ke card generate.
-            _, rarity = self.last_catch
-            custom_url = get_emoji_thumbnail_url(rarity)
-            thumb_src  = custom_url or "attachment://catch.png"
+            # Ada tangkapan terakhir → tampilin thumbnail-nya (lihat prioritas
+            # di _thumb_url: emoji ikan itu sendiri > emoji rarity > card generate).
+            thumb_src = self._thumb_url() or "attachment://catch.png"
             container.add_item(discord.ui.Section(
                 discord.ui.TextDisplay(header_text),
                 accessory=discord.ui.Thumbnail(thumb_src)
