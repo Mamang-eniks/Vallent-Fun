@@ -996,19 +996,27 @@ def emoji(key: str) -> str:
     cfg = get_emoji_config()
     return cfg.get(key, DEFAULT_EMOJIS.get(key, ""))
 
+def parse_emoji_image_url(emoji_str: str | None) -> str | None:
+    """Parse 1 string emoji APAPUN (custom Discord <:nama:id> / <a:nama:id>,
+    bisa dari emoji_config ATAU dari field emoji ikan/rod/umpan hasil
+    dsetfishing) jadi URL gambar CDN Discord. Return None kalau itu emoji
+    unicode biasa (gak ada gambar buat di-URL-in)."""
+    if not emoji_str:
+        return None
+    m = re.match(r"^<(a?):[a-zA-Z0-9_]+:(\d+)>$", emoji_str.strip())
+    if not m:
+        return None
+    animated, eid = m.groups()
+    ext = "gif" if animated else "png"
+    return f"https://cdn.discordapp.com/emojis/{eid}.{ext}?size=128"
+
 def get_emoji_thumbnail_url(key: str) -> str | None:
     """Kalau owner udah set CUSTOM EMOJI DISCORD (format <:nama:id> / <a:nama:id>,
     bukan unicode default) buat key ini lewat `dsetemoji`, return URL gambar
     emoji itu dari CDN Discord — biar bisa dipasang langsung jadi Thumbnail
     Components V2 (misal buat rarity legendary/mythic/dll). Return None kalau
     key itu masih pakai emoji unicode default (gak ada gambar buat di-URL-in)."""
-    val = emoji(key).strip()
-    m = re.match(r"^<(a?):[a-zA-Z0-9_]+:(\d+)>$", val)
-    if not m:
-        return None
-    animated, eid = m.groups()
-    ext = "gif" if animated else "png"
-    return f"https://cdn.discordapp.com/emojis/{eid}.{ext}?size=128"
+    return parse_emoji_image_url(emoji(key))
 
 
 # ===================== SPIN WHEEL SYSTEM =====================
@@ -2192,12 +2200,18 @@ class InventoryView(discord.ui.LayoutView):
         inv_text   = "\n".join([f"• {k} `x{v}` — ~{_fish_sell_price(k) * v} {coin_e}" for k, v in inv_count.items()]) if inv_count else "_Inventori kosong, ayo mancing dulu!_"
         bait_text  = "\n".join([f"• {k} `x{v}`" for k, v in udata.get('bait', {}).items()]) or "_Habis!_"
         n_rods     = len(udata.get("owned_rods") or [udata.get("rod", "-")])
+        _, cur_rods, cur_baits = get_fishing_config()
+        rod_info   = next((r for r in cur_rods if r["name"] == udata["rod"]), {})
+        rod_emoji  = rod_info.get("emoji") or emoji('fish')
+        eq_bait    = udata.get("equipped_bait")
+        bait_info  = next((b for b in cur_baits if b["name"] == eq_bait), {}) if eq_bait else {}
+        bait_emoji = bait_info.get("emoji") or "🪱"
 
         desc = (
             f"### 🎒 Inventori\n"
             f"**{coin_e} Koin:** {udata['coins']} | **Total Tangkapan:** {udata['total_catch']}\n"
-            f"**{emoji('fish')} Rod dipakai:** {udata['rod']} _(punya {n_rods} rod)_ | "
-            f"**🪱 Umpan dipakai:** {udata.get('equipped_bait') or '-'}"
+            f"**{rod_emoji} Rod dipakai:** {udata['rod']} _(punya {n_rods} rod)_ | "
+            f"**{bait_emoji} Umpan dipakai:** {eq_bait or '-'}"
         )
         if self.note:
             desc = f"{self.note}\n\n{desc}"
@@ -2361,6 +2375,12 @@ class FishingMainView(discord.ui.LayoutView):
         uid_fish  = interaction.user.id
         est_price = _fish_sell_price(caught["name"])
 
+        # Ambil emoji ROD YANG BENERAN DIPAKAI (bukan emoji('fish') generic),
+        # biar tiap rod nampilin emoji custom-nya masing-masing.
+        _, cur_rods, _ = get_fishing_config()
+        rod_info  = next((r for r in cur_rods if r["name"] == udata["rod"]), {})
+        rod_emoji = rod_info.get("emoji") or emoji('fish')
+
         bait_txt  = (t("fish_bait", uid_fish, bait=used_bait)
                      if used_bait else t("fish_no_bait", uid_fish))
         star      = {"mythic": "🌈", "legendary": "🌟", "epic": "💎"}.get(rarity, "✨")
@@ -2373,14 +2393,14 @@ class FishingMainView(discord.ui.LayoutView):
             desc  = (
                 f"**{interaction.user.display_name}** dapet ikan **LANGKA** bro!\n\n"
                 f"{caught['emoji']} **{caught['name']}**\n🍀 Luck: **{luck_pct}%**\n{sell_hint}\n"
-                f"{emoji('fish')} Rod: **{udata['rod']}**\n{bait_txt}"
+                f"{rod_emoji} Rod: **{udata['rod']}**\n{bait_txt}"
                 f"\n\n-# {t('fish_rare_footer', uid_fish)}"
             )
         else:
             title = t("fish_title_normal", uid_fish, emoji=caught["emoji"])
             desc  = (
                 f"**{interaction.user.display_name}** dapet **{caught['name']}** [{rarity_label}]\n"
-                f"🍀 Luck: **{luck_pct}%**\n{sell_hint}\n{emoji('fish')} Rod: **{udata['rod']}**\n{bait_txt}"
+                f"🍀 Luck: **{luck_pct}%**\n{sell_hint}\n{rod_emoji} Rod: **{udata['rod']}**\n{bait_txt}"
             )
 
         self.body_text = f"**{title}**\n{desc}"
