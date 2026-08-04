@@ -2849,22 +2849,36 @@ def buy_rod_for_user(uid: str, rod_name: str) -> dict:
         f"-# Cek `dinv` → Equipment buat ganti-ganti rod yang lo punya."
     )}
 
-def buy_bait_for_user(uid: str, bait_name: str) -> dict:
-    """Proses pembelian 1 umpan (x5). Return {"ok": bool, "msg": str}."""
+BAIT_BULK_PRICE_INCREASE = 0.05   # tiap unit ke-n dalam 1x beli, harga naik 5%
+
+def calc_bait_bulk_price(base_price: int, qty: int) -> int:
+    """Total harga beli `qty` umpan sekaligus — makin banyak dibeli, makin
+    mahal per unit-nya (harga unit ke-n = base * (1 + 0.05*(n-1)))."""
+    total = 0.0
+    for n in range(qty):
+        total += base_price * (1 + BAIT_BULK_PRICE_INCREASE * n)
+    return round(total)
+
+def buy_bait_for_user(uid: str, bait_name: str, qty: int = 5) -> dict:
+    """Proses pembelian `qty` umpan. Harga makin mahal makin banyak dibeli
+    (lihat calc_bait_bulk_price). Return {"ok": bool, "msg": str}."""
+    if qty <= 0:
+        return {"ok": False, "msg": "❌ Jumlah harus minimal 1!"}
     _, _, baits = get_fishing_config()
     bait = next((b for b in baits if b["name"] == bait_name), None)
     if not bait:
         return {"ok": False, "msg": "❌ Umpan tidak ditemukan!"}
     udata = get_user_fishing(uid)
-    if udata["coins"] < bait["price"]:
-        return {"ok": False, "msg": f"❌ Koin kurang! Butuh {bait['price']} {emoji('coin')}"}
-    udata["coins"] -= bait["price"]
-    udata.setdefault("bait", {})[bait["name"]] = udata["bait"].get(bait["name"], 0) + 5
+    total_price = calc_bait_bulk_price(bait["price"], qty)
+    if udata["coins"] < total_price:
+        return {"ok": False, "msg": f"❌ Koin kurang! Butuh {total_price} {emoji('coin')} buat beli {qty}x, koin lo cuma {udata['coins']}."}
+    udata["coins"] -= total_price
+    udata.setdefault("bait", {})[bait["name"]] = udata["bait"].get(bait["name"], 0) + qty
     if not udata.get("equipped_bait"):
         udata["equipped_bait"] = bait["name"]
     save_user_fishing(uid, udata)
     return {"ok": True, "msg": (
-        f"{emoji('success')} Beli **{bait['name']}** x5! Sisa koin: {udata['coins']} {emoji('coin')}\n"
+        f"{emoji('success')} Beli **{bait['name']} x{qty}** seharga **{total_price}** {emoji('coin')}! Sisa koin: {udata['coins']} {emoji('coin')}\n"
         f"-# Cek `dinv` → Equipment buat ganti-ganti umpan yang lo punya."
     )}
 
@@ -2872,11 +2886,12 @@ def buy_bait_for_user(uid: str, bait_name: str) -> dict:
 class PurchaseConfirmView(discord.ui.View):
     """Konfirmasi Ya/Tidak sebelum beli item di Shop — biar gak kebeli gak
     sengaja gara-gara salah pencet di dropdown."""
-    def __init__(self, user_id: int, kind: str, item_name: str):
+    def __init__(self, user_id: int, kind: str, item_name: str, qty: int = 1):
         super().__init__(timeout=30)
         self.user_id   = user_id
         self.kind      = kind  # "rod" atau "bait"
         self.item_name = item_name
+        self.qty       = qty
 
     async def _finish(self, interaction: discord.Interaction, content: str):
         for child in self.children:
@@ -2891,7 +2906,7 @@ class PurchaseConfirmView(discord.ui.View):
         if self.kind == "rod":
             result = buy_rod_for_user(str(self.user_id), self.item_name)
         else:
-            result = buy_bait_for_user(str(self.user_id), self.item_name)
+            result = buy_bait_for_user(str(self.user_id), self.item_name, self.qty)
         await self._finish(interaction, result["msg"])
 
     @discord.ui.button(label="Batal", style=discord.ButtonStyle.danger, emoji="✖️")
@@ -2913,12 +2928,12 @@ class ShopBuyView(discord.ui.LayoutView):
         udata = get_user_fishing(str(user_id))
 
         rod_text  = "\n".join([f"{r['emoji']} **{r['name']}** - {r['price']} {emoji('coin')} (Tier {r['tier']}, +{r['luck_bonus']}% luck)" for r in rods])
-        bait_text = "\n".join([f"{b['emoji']} **{b['name']}** - {b['price']} {emoji('coin')} (+{b['luck_bonus']}% luck)" for b in baits])
+        bait_text = "\n".join([f"{b['emoji']} **{b['name']}** - mulai {b['price']} {emoji('coin')}/pcs (+{b['luck_bonus']}% luck)" for b in baits])
 
         container = discord.ui.Container(accent_colour=DARK_RED)
         container.add_item(discord.ui.TextDisplay(
             f"### 🏪 Fishing Shop\n**Koin lo:** {udata['coins']} {emoji('coin')}\n\n"
-            f"**🎣 Rod:**\n{rod_text}\n\n**🪱 Umpan:**\n{bait_text}"
+            f"**🎣 Rod:**\n{rod_text}\n\n**🪱 Umpan** _(bisa custom jumlah beli, harga naik makin banyak)_:\n{bait_text}"
         ))
         container.add_item(discord.ui.Separator())
 
@@ -2973,11 +2988,34 @@ class ShopBuyView(discord.ui.LayoutView):
             return
         udata = get_user_fishing(str(interaction.user.id))
         await interaction.response.send_message(
-            f"{bait.get('emoji', '🪱')} Beli **{bait['name']} x5** seharga **{bait['price']}** {emoji('coin')}?\n"
-            f"Koin lo: {udata['coins']} {emoji('coin')}",
-            view=PurchaseConfirmView(interaction.user.id, "bait", bait["name"]),
+            f"{bait.get('emoji', '🪱')} Mau beli **{bait['name']}** berapa banyak?\n"
+            f"Harga satuan: {bait['price']} {emoji('coin')} (naik {int(BAIT_BULK_PRICE_INCREASE * 100)}% tiap unit dalam 1x beli) | "
+            f"Koin lo: {udata['coins']} {emoji('coin')}\n"
+            f"Ketik jumlahnya (dalam 30 detik):",
             ephemeral=True
         )
+        try:
+            msg = await bot.wait_for(
+                "message",
+                check=lambda m: m.author.id == interaction.user.id and m.channel.id == interaction.channel.id,
+                timeout=30
+            )
+            qty = int(msg.content.strip())
+            if qty <= 0:
+                await interaction.followup.send("❌ Jumlah harus minimal 1!", ephemeral=True)
+                return
+            total_price = calc_bait_bulk_price(bait["price"], qty)
+            udata = get_user_fishing(str(interaction.user.id))
+            await interaction.followup.send(
+                f"{bait.get('emoji', '🪱')} Beli **{bait['name']} x{qty}** seharga total **{total_price}** {emoji('coin')}?\n"
+                f"Koin lo: {udata['coins']} {emoji('coin')}",
+                view=PurchaseConfirmView(interaction.user.id, "bait", bait["name"], qty=qty),
+                ephemeral=True
+            )
+        except ValueError:
+            await interaction.followup.send("❌ Itu bukan angka!", ephemeral=True)
+        except asyncio.TimeoutError:
+            await interaction.followup.send("⏰ Timeout, batal beli.", ephemeral=True)
 
 # ===================== EQUIPMENT SYSTEM =====================
 
