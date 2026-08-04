@@ -4114,7 +4114,7 @@ async def broadcast_maintenance(active: bool, reason: str):
                     ),
                     color=0xFF6600
                 )
-                em.set_footer(text="Nikoliesamphink · Bot System")
+                em.set_footer(text="Startdoom · Bot System")
                 em.timestamp = datetime.datetime.now(tz=WIB)
             else:
                 em = discord.Embed(
@@ -4901,7 +4901,7 @@ async def premium_user_cmd(ctx):
     )
     if qris_url_main:
         em.set_image(url=qris_url_main)
-    em.set_footer(text="Nikoliesamphink · Premium System · Select a package below to order")
+    em.set_footer(text="Startdoom · Premium System · Select a package below to order")
 
     pkg_options = [discord.SelectOption(
         label=k,
