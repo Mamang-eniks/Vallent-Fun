@@ -1044,9 +1044,49 @@ class ChecklistPanelView(discord.ui.View):
             btn = discord.ui.Button(label=label, style=style if key == self.tab else discord.ButtonStyle.secondary, row=0)
             btn.callback = self._make_tab_cb(key)
             self.add_item(btn)
-        claim_btn = discord.ui.Button(label="🎁 Claim", style=discord.ButtonStyle.success, row=1)
-        claim_btn.callback = self.claim
-        self.add_item(claim_btn)
+
+        # Tombol Claim cuma ditampilin kalau MEMANG ada yang bisa diklaim,
+        # dan jadi disabled (bukan ilang gitu aja) begitu udah diklaim —
+        # biar user tau statusnya, tapi gak bisa diklik lagi/dobel klaim.
+        state = self._claim_state()
+        if state == "ready":
+            claim_btn = discord.ui.Button(label="🎁 Claim", style=discord.ButtonStyle.success, row=1)
+            claim_btn.callback = self.claim
+            self.add_item(claim_btn)
+        elif state == "claimed":
+            claim_btn = discord.ui.Button(label="✅ Sudah Diklaim", style=discord.ButtonStyle.secondary, row=1, disabled=True)
+            self.add_item(claim_btn)
+        # state == "hidden" → belum ada yang beres, tombol gak usah ditampilin dulu
+
+    def _claim_state(self) -> str:
+        """Return 'ready' (ada yg bisa diklaim) | 'claimed' (udah abis diklaim
+        semua) | 'hidden' (belum ada yg beres) — buat tab yang lagi aktif."""
+        uid = str(self.user.id)
+        if self.tab == "quests":
+            statuses = get_quest_status(uid)
+            if any(s["ready"] for s in statuses):
+                return "ready"
+            if statuses and all(s["done"] for s in statuses):
+                return "claimed"
+            return "hidden"
+        elif self.tab == "weekly":
+            tasks    = build_weekly_checklist_tasks(uid)
+            all_done = bool(tasks) and all(t["done"] for t in tasks)
+            claimed  = get_user_weekly(uid).get("reward_claimed", False)
+            if all_done and not claimed:
+                return "ready"
+            if all_done and claimed:
+                return "claimed"
+            return "hidden"
+        else:
+            tasks    = build_daily_checklist_tasks(uid)
+            all_done = bool(tasks) and all(t["done"] for t in tasks)
+            claimed  = get_user_checklist(uid).get("bonus_claimed", False)
+            if all_done and not claimed:
+                return "ready"
+            if all_done and claimed:
+                return "claimed"
+            return "hidden"
 
     def _make_tab_cb(self, key: str):
         async def cb(interaction: discord.Interaction):
@@ -1091,33 +1131,22 @@ class ChecklistPanelView(discord.ui.View):
             await interaction.response.send_message("❌ Bukan panel lo bro!", ephemeral=True)
             return
         uid = str(self.user.id)
+        status_text = None
         if self.tab == "quests":
             newly = claim_ready_quests(uid)
-            if not newly:
-                await interaction.response.send_message("⚠️ Gak ada quest yang siap diklaim!", ephemeral=True)
-                return
-            labels = ", ".join(q["label"] for q in newly)
-            await interaction.response.send_message(f"🎉 Quest diklaim: **{labels}**!", ephemeral=True)
+            if newly:
+                labels = ", ".join(q["label"] for q in newly)
+                status_text = f"🎉 Quest diklaim: **{labels}**!"
         elif self.tab == "weekly":
-            tasks = build_weekly_checklist_tasks(uid)
-            if not all(t["done"] for t in tasks):
-                await interaction.response.send_message("⚠️ Beresin semua task weekly dulu bro!", ephemeral=True)
-                return
-            if not claim_weekly_reward(uid):
-                await interaction.response.send_message("⚠️ Reward weekly udah diklaim minggu ini!", ephemeral=True)
-                return
-            await interaction.response.send_message(f"🎉 Weekly reward diklaim! +**{WEEKLY_QUEST_REWARD}** koin!", ephemeral=True)
+            if claim_weekly_reward(uid):
+                status_text = f"🎉 Weekly reward diklaim! +**{WEEKLY_QUEST_REWARD}** koin!"
         else:
-            tasks = build_daily_checklist_tasks(uid)
-            if not all(t["done"] for t in tasks):
-                await interaction.response.send_message("⚠️ Beresin semua task daily dulu bro!", ephemeral=True)
-                return
-            if not claim_checklist_bonus(uid):
-                await interaction.response.send_message("⚠️ Bonus daily udah diklaim hari ini!", ephemeral=True)
-                return
-            await interaction.response.send_message(f"🎉 Daily checklist bonus diklaim! +**{DAILY_CHECKLIST_BONUS}** koin!", ephemeral=True)
+            if claim_checklist_bonus(uid):
+                status_text = f"🎉 Daily checklist bonus diklaim! +**{DAILY_CHECKLIST_BONUS}** koin!"
+        # Semua refresh dalam SATU update (gambar checklist + tombol + status),
+        # gak ada notif/pesan terpisah lagi.
         self._build_buttons()
-        await interaction.edit_original_response(attachments=[self._render()], view=self)
+        await interaction.response.edit_message(content=status_text, attachments=[self._render()], view=self)
 
 
 async def send_checklist_panel(sender, user: discord.abc.User, tab: str = "daily"):
@@ -1638,25 +1667,50 @@ def get_vote_bonus_remaining(user_id: str) -> int:
     remaining = exp - time.time()
     return max(0, int(remaining))
 
+async def notify_vote_dm(user_id: str):
+    """DM user abis bot nerima webhook vote dari Top.gg. Ini yang tadinya
+    BELUM ADA — webhook cuma nyimpen record doang, gak pernah ngirim DM."""
+    try:
+        user = await bot.fetch_user(int(user_id))
+        await user.send(
+            f"{emoji('success')} Makasih udah vote **{bot.user.name if bot.user else 'bot ini'}** di Top.gg! 🎉\n"
+            f"Ketik `dclaimvote` di server buat klaim reward koin + bonus luck mancing kamu!"
+        )
+    except Exception as e:
+        print(f"⚠️  Gagal DM user {user_id} soal vote: {e}")
+
 async def check_user_voted_topgg(user_id: int) -> bool:
     """
     Cek via Top.gg API apakah user sudah vote.
     Return True jika sudah vote, False jika belum atau error.
+    Fallback ke record webhook (persisten di vote.json, BUKAN cuma in-memory
+    cache yang ilang tiap restart) kalau API gagal/gak dikonfig.
     """
-    if not TOPGG_TOKEN or not BOT_ID:
-        return False
-    url = f"https://top.gg/api/bots/{BOT_ID}/check?userId={user_id}"
-    headers = {"Authorization": TOPGG_TOKEN}
-    try:
-        async with aiohttp.ClientSession() as session:
-            async with session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=10)) as resp:
-                if resp.status == 200:
-                    data = await resp.json()
-                    return bool(data.get("voted", 0))
-    except Exception as e:
-        print(f"Top.gg API error: {e}")
-    # Fallback: cek cache webhook
-    return str(user_id) in _vote_cache
+    uid = str(user_id)
+
+    if TOPGG_TOKEN and BOT_ID:
+        url = f"https://top.gg/api/bots/{BOT_ID}/check?userId={user_id}"
+        headers = {"Authorization": TOPGG_TOKEN}
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=10)) as resp:
+                    if resp.status == 200:
+                        data = await resp.json()
+                        if bool(data.get("voted", 0)):
+                            return True
+                    else:
+                        body = await resp.text()
+                        print(f"⚠️  Top.gg API respon {resp.status}: {body[:200]}")
+        except Exception as e:
+            print(f"⚠️  Top.gg API error: {e}")
+
+    # Fallback: record webhook (in-memory cache ATAU vote.json persisten).
+    # Top.gg vote berlaku 12 jam, jadi record webhook dianggap valid kalau
+    # umurnya belum lewat itu — biar tetep kedeteksi walau bot abis restart.
+    if uid in _vote_cache:
+        return True
+    last_webhook = get_vote_record(uid).get("last_vote_webhook", 0)
+    return (time.time() - last_webhook) < 12 * 3600
 
 # ===================== MAINTENANCE =====================
 def get_maintenance() -> dict:
@@ -2634,8 +2688,6 @@ class FishingMainView(discord.ui.LayoutView):
         extra_lines = ""
         if is_new_dex:
             extra_lines += "\n🆕 Ikan baru di Koleksi lo! Cek `dkoleksi`."
-        if drop_msgs:
-            extra_lines += "\n" + "\n".join(drop_msgs)
 
         self.last_catch = (caught, rarity)  # buat generate thumbnail gambar
 
@@ -2658,6 +2710,11 @@ class FishingMainView(discord.ui.LayoutView):
         self._build()
         catch_file = self._render_catch_file()
         await interaction.response.edit_message(view=self, attachments=[catch_file] if catch_file else [])
+
+        # Notif Lootbox/Crate dipisah dari embed hasil mancing (message ephemeral
+        # sendiri), biar gak numpuk jadi 1 embed campur aduk sama hasil tangkapan.
+        if drop_msgs:
+            await interaction.followup.send("\n".join(drop_msgs), ephemeral=True)
 
         # Cek kalau ada quest mancing yang baru "siap diklaim" (belum auto-reward,
         # user harus klaim manual lewat dquest)
@@ -2733,6 +2790,14 @@ class SpinWheelView(discord.ui.LayoutView):
             await interaction.response.send_message(
                 f"⏳ Sabar bro, tunggu **{sisa} detik** lagi sebelum putar lagi!", ephemeral=True
             )
+            # Notif otomatis ilang sendiri sesuai sisa detik cooldown-nya
+            async def _auto_dismiss(delay: float):
+                await asyncio.sleep(delay)
+                try:
+                    await interaction.delete_original_response()
+                except Exception:
+                    pass
+            asyncio.create_task(_auto_dismiss(max(sisa, 1)))
             return
         cost, _ = get_spin_config()
         udata = get_user_fishing(uid)
@@ -5992,6 +6057,14 @@ def create_vote_webhook_app():
             vote_data[user_id]["vote_type"] = vote_type
             save_vote_data(vote_data)
             print(f"✅ Vote webhook diterima: user {user_id} | type: {vote_type}")
+
+            # DM user biar dia tau votenya udah masuk & bisa langsung dclaimvote.
+            # Flask jalan di thread terpisah dari asyncio, jadi dijadwalin pake
+            # run_coroutine_threadsafe ke event loop bot.
+            try:
+                asyncio.run_coroutine_threadsafe(notify_vote_dm(user_id), bot.loop)
+            except Exception as e:
+                print(f"⚠️  Gagal schedule DM vote: {e}")
 
         return "OK", 200
 
