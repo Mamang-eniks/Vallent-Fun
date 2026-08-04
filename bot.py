@@ -1024,6 +1024,75 @@ def render_catch_thumbnail(fish_name: str, rarity: str) -> io.BytesIO:
     return buf
 
 
+def render_leaderboard_card(title: str, entries: list) -> io.BytesIO:
+    """Render leaderboard jadi gambar (bukan teks embed doang) — tema dark red
+    sama kayak checklist, ada avatar bulat tiap user.
+    entries: list of {"rank":int, "name":str, "coins":int, "avatar":bytes|None}"""
+    W       = 640
+    row_h   = 84
+    header_h = 96
+    H = header_h + row_h * max(len(entries), 1) + 24
+
+    img = Image.new("RGB", (W, H), CK_BG)
+    d   = ImageDraw.Draw(img)
+
+    # Header
+    _ck_rounded(d, (0, 0, W, header_h), radius=0, fill=CK_CARD)
+    d.rectangle((0, header_h - 4, W, header_h), fill=CK_ACCENT)
+    title_font = ck_font("Bold", 30)
+    d.text((28, 30), title, font=title_font, fill=CK_TEXT_MAIN)
+
+    if not entries:
+        empty_font = ck_font("Medium", 20)
+        d.text((28, header_h + 20), "Belum ada data koin.", font=empty_font, fill=CK_TEXT_DIM)
+    else:
+        medal_colors = {1: (255, 215, 0), 2: (200, 200, 210), 3: (205, 127, 50)}
+        y = header_h + 12
+        for e in entries:
+            rank = e["rank"]
+            row_bg = (26, 17, 17) if rank % 2 == 0 else (32, 20, 20)
+            _ck_rounded(d, (14, y, W - 14, y + row_h - 10), radius=16, fill=row_bg)
+
+            av_size = 56
+            av_x, av_y = 28, y + (row_h - 10 - av_size) // 2
+            if e.get("avatar"):
+                try:
+                    av_img = Image.open(io.BytesIO(e["avatar"])).convert("RGBA").resize((av_size, av_size))
+                    mask = Image.new("L", (av_size, av_size), 0)
+                    ImageDraw.Draw(mask).ellipse((0, 0, av_size, av_size), fill=255)
+                    img.paste(av_img, (av_x, av_y), mask)
+                except Exception:
+                    _ck_rounded(d, (av_x, av_y, av_x + av_size, av_y + av_size), radius=av_size // 2, fill=(60, 38, 38))
+            else:
+                _ck_rounded(d, (av_x, av_y, av_x + av_size, av_y + av_size), radius=av_size // 2, fill=(60, 38, 38))
+
+            # Ring warna emas/perak/perunggu buat top 3
+            if rank in medal_colors:
+                d.ellipse((av_x - 3, av_y - 3, av_x + av_size + 3, av_y + av_size + 3), outline=medal_colors[rank], width=3)
+
+            rank_font = ck_font("Bold", 20)
+            rank_color = medal_colors.get(rank, CK_TEXT_DIM)
+            rank_label = {1: "🥇", 2: "🥈", 3: "🥉"}.get(rank, f"#{rank}")
+            d.text((av_x + av_size + 16, y + 10), rank_label, font=rank_font, fill=rank_color)
+
+            name_font = ck_font("SemiBold", 22)
+            name_y = y + 34 if rank in medal_colors else y + (row_h - 10) / 2 - 14
+            d.text((av_x + av_size + 16, name_y), e["name"][:26], font=name_font, fill=CK_TEXT_MAIN)
+
+            coin_font = ck_font("Medium", 19)
+            coin_text = f"{e['coins']:,}".replace(",", ".") + f" {'koin' if e['coins'] != 1 else 'koin'}"
+            bbox = d.textbbox((0, 0), coin_text, font=coin_font)
+            cw = bbox[2] - bbox[0]
+            d.text((W - 30 - cw, y + (row_h - 10) / 2 - 12), coin_text, font=coin_font, fill=CK_GOLD)
+
+            y += row_h
+
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    buf.seek(0)
+    return buf
+
+
 class ChecklistPanelView(discord.ui.View):
     """View interaktif Daily/Weekly/Quests. Tiap pindah tab, gambar card-nya
     di-generate ulang lewat render_checklist_card() dan dikirim sebagai
@@ -4114,7 +4183,7 @@ async def broadcast_maintenance(active: bool, reason: str):
                     ),
                     color=0xFF6600
                 )
-                em.set_footer(text="Startdoom · Bot System")
+                em.set_footer(text="Nikoliesamphink · Bot System")
                 em.timestamp = datetime.datetime.now(tz=WIB)
             else:
                 em = discord.Embed(
@@ -4184,7 +4253,7 @@ async def on_guild_join(guild: discord.Guild):
             "`dfish` / `/fish` — Go fishing & sell your catch\n"
             "`dtebak` / `/tebak` — Riddle arena with coin rewards\n"
             "`dcoins` / `/coins` — Check your coin balance\n"
-            "`dleaderboard` / `/leaderboard` — Level ranking"
+            "`dleaderboard` / `/leaderboard` — Leaderboard koin (global, semua server)"
         )),
         ("⚠️ Moderation", (
             "`dwarn` — Warn a member\n"
@@ -4294,6 +4363,92 @@ async def tempa_cmd(ctx):
     if await check_maintenance(ctx): return
     if await check_premium_gate(ctx, "tempa"): return
     await ctx.reply(view=TempaView(ctx.author.id))
+
+@bot.command(name="giveitem", aliases=["gift", "admingive"])
+async def giveitem_cmd(ctx, member: discord.Member = None, item_type: str = None, *, value: str = None):
+    """Owner-only: kasih item APAPUN ke user manapun TANPA LIMIT.
+    Format: dgiveitem @user <tipe> <value>
+      coin/material/lootbox/crate → value = jumlah (angka)
+      fish                        → value = "Nama Ikan" atau "Nama Ikan|jumlah"
+      rod                         → value = "Nama Rod" (langsung masuk owned_rods)"""
+    if ctx.author.id != OWNER_ID:
+        await ctx.reply(f"{emoji('fail')} Cuma Owner Bot yang bisa pake command ini!")
+        return
+    if not member or not item_type or not value:
+        await ctx.reply(
+            "⚠️ **Cara pakai:** `dgiveitem @user <tipe> <value>`\n"
+            "**Tipe:** `coin`, `material`, `lootbox`, `crate`, `fish`, `rod`\n\n"
+            "Contoh:\n"
+            "`dgiveitem @Niks coin 5000`\n"
+            f"`dgiveitem @Niks material 50`\n"
+            "`dgiveitem @Niks lootbox 3`\n"
+            "`dgiveitem @Niks fish Ikan Naga|3`\n"
+            "`dgiveitem @Niks rod Pancing Titan`\n"
+            "-# Gak ada limit — bebas sebanyak apapun."
+        )
+        return
+
+    item_type = item_type.lower().strip()
+    uid   = str(member.id)
+    udata = get_user_fishing(uid)
+
+    if item_type == "coin":
+        try:
+            amt = int(value.strip())
+        except ValueError:
+            await ctx.reply(f"{emoji('fail')} Value buat coin harus angka!")
+            return
+        udata["coins"] += amt
+        msg = f"{emoji('coin')} **{amt} koin** dikasih ke {member.mention}! Total sekarang: **{udata['coins']}**."
+    elif item_type == "material":
+        try:
+            amt = int(value.strip())
+        except ValueError:
+            await ctx.reply(f"{emoji('fail')} Value buat material harus angka!")
+            return
+        udata["materials"] = udata.get("materials", 0) + amt
+        msg = f"{MATERIAL_EMOJI} **{amt}x {MATERIAL_NAME}** dikasih ke {member.mention}!"
+    elif item_type == "lootbox":
+        try:
+            amt = int(value.strip())
+        except ValueError:
+            await ctx.reply(f"{emoji('fail')} Value buat lootbox harus angka!")
+            return
+        udata["lootbox"] = udata.get("lootbox", 0) + amt
+        udata["lootbox_collected"] = udata.get("lootbox_collected", 0) + amt
+        msg = f"📦 **{amt}x Lootbox** dikasih ke {member.mention}!"
+    elif item_type == "crate":
+        try:
+            amt = int(value.strip())
+        except ValueError:
+            await ctx.reply(f"{emoji('fail')} Value buat crate harus angka!")
+            return
+        udata["crate"] = udata.get("crate", 0) + amt
+        udata["crate_collected"] = udata.get("crate_collected", 0) + amt
+        msg = f"🗃️ **{amt}x Crate** dikasih ke {member.mention}!"
+    elif item_type == "fish":
+        parts = value.split("|")
+        fish_name = parts[0].strip()
+        try:
+            qty = int(parts[1].strip()) if len(parts) > 1 else 1
+        except ValueError:
+            qty = 1
+        udata.setdefault("inventory", []).extend([fish_name] * max(qty, 1))
+        if fish_name not in udata.get("fish_dex", []):
+            udata.setdefault("fish_dex", []).append(fish_name)
+        msg = f"🐟 **{fish_name} x{qty}** dikasih ke {member.mention}!"
+    elif item_type == "rod":
+        rod_name = value.strip()
+        owned = udata.setdefault("owned_rods", [])
+        if rod_name not in owned:
+            owned.append(rod_name)
+        msg = f"{emoji('fish')} Rod **{rod_name}** dikasih ke {member.mention}! _(masuk owned_rods, tinggal di-equip lewat `dinv`)_"
+    else:
+        await ctx.reply(f"{emoji('fail')} Tipe gak dikenal! Pake: `coin`/`material`/`lootbox`/`crate`/`fish`/`rod`")
+        return
+
+    save_user_fishing(uid, udata)
+    await ctx.reply(f"{emoji('success')} {msg}")
 
 @bot.command(name="tebak", aliases=["riddle", "tebakan"])
 async def tebak_cmd(ctx):
@@ -4901,7 +5056,7 @@ async def premium_user_cmd(ctx):
     )
     if qris_url_main:
         em.set_image(url=qris_url_main)
-    em.set_footer(text="Startdoom · Premium System · Select a package below to order")
+    em.set_footer(text="Nikoliesamphink · Premium System · Select a package below to order")
 
     pkg_options = [discord.SelectOption(
         label=k,
@@ -5760,21 +5915,52 @@ async def slash_givecoin(interaction: discord.Interaction, member: discord.Membe
     except Exception:
         pass
 
-@tree.command(name="leaderboard", description="Lihat leaderboard koin terbanyak")
+async def build_leaderboard_entries(bot, limit: int = 10) -> list:
+    """Ambil top N user berdasarkan koin — GLOBAL (semua server tempat bot
+    ada, bukan cuma 1 server) dan owner di-EXCLUDE dari ranking. Nama & avatar
+    di-resolve langsung dari Discord (bot.get_user/fetch_user), bukan dari
+    member guild tertentu, biar user dari server manapun tetep kebaca."""
+    fdata  = get_fishing_data()
+    ranked = sorted(
+        ((uid, d) for uid, d in fdata.items() if uid != str(OWNER_ID)),
+        key=lambda x: x[1].get("coins", 0), reverse=True
+    )[:limit]
+
+    entries = []
+    for i, (uid, d) in enumerate(ranked):
+        user = bot.get_user(int(uid))
+        if user is None:
+            try:
+                user = await bot.fetch_user(int(uid))
+            except Exception:
+                user = None
+        name = user.display_name if user else f"User {uid[-4:]}"
+        avatar_bytes = None
+        if user:
+            try:
+                avatar_bytes = await user.display_avatar.replace(size=128, format="png").read()
+            except Exception:
+                avatar_bytes = None
+        entries.append({"rank": i + 1, "name": name, "coins": d.get("coins", 0), "avatar": avatar_bytes})
+    return entries
+
+@bot.command(name="leaderboard", aliases=["lb", "top"])
+async def leaderboard_cmd(ctx):
+    if await check_maintenance(ctx): return
+    if await check_premium_gate(ctx, "leaderboard"): return
+    entries = await build_leaderboard_entries(bot)
+    buf  = render_leaderboard_card(f"{emoji('coin')} Leaderboard Koin — Global", entries)
+    file = discord.File(buf, filename="leaderboard.png")
+    await ctx.reply(file=file)
+
+@tree.command(name="leaderboard", description="Lihat leaderboard koin terbanyak (global, semua server)")
 async def slash_leaderboard(interaction: discord.Interaction):
     if await check_premium_gate_slash(interaction, "leaderboard"): return
-    fdata = get_fishing_data()
-    sorted_users = sorted(fdata.items(), key=lambda x: x[1].get("coins", 0), reverse=True)[:10]
-    if not sorted_users:
-        await interaction.response.send_message("📊 Belum ada data koin!", ephemeral=True)
-        return
-    text = ""
-    for i, (uid, data) in enumerate(sorted_users):
-        member = interaction.guild.get_member(int(uid))
-        name   = member.display_name if member else f"User {uid[:6]}"
-        medal  = ["🥇", "🥈", "🥉"][i] if i < 3 else f"{i+1}."
-        text  += f"{medal} **{name}** — {data.get('coins', 0)} {emoji('coin')}\n"
-    await interaction.response.send_message(view=panel(f"{emoji('coin')} Leaderboard Koin", text))
+    await interaction.response.defer()
+    entries = await build_leaderboard_entries(bot)
+    buf  = render_leaderboard_card(f"{emoji('coin')} Leaderboard Koin — Global", entries)
+    file = discord.File(buf, filename="leaderboard.png")
+    await interaction.followup.send(file=file)
 
 @tree.command(name="daily", description="Klaim koin harian")
 async def slash_daily(interaction: discord.Interaction):
