@@ -6035,18 +6035,24 @@ def create_vote_webhook_app():
     @app.route("/dblwebhook", methods=["POST"])
     @app.route("/webhook", methods=["POST"])  # alias — Top.gg lo kepasang ke path ini
     def dbl_webhook():
+        print(f"📨 Webhook masuk dari {flask_request.remote_addr} → {flask_request.path}")
+
         # Validasi password webhook
         auth = flask_request.headers.get("Authorization", "")
         if WEBHOOK_PASSWORD and auth != WEBHOOK_PASSWORD:
+            print(f"❌ Webhook DITOLAK: Authorization header gak cocok sama WEBHOOK_PASSWORD.")
             abort(401)
 
         data = flask_request.get_json(silent=True)
         if not data:
+            raw = flask_request.get_data(as_text=True)
+            print(f"❌ Webhook DITOLAK: body bukan JSON valid. Raw: {raw[:200]}")
             abort(400)
 
         user_id = str(data.get("user", ""))
         bot_id  = str(data.get("bot", ""))
         vote_type = data.get("type", "upvote")  # "upvote" atau "test"
+        print(f"✅ Webhook payload valid: user={user_id or '-'} bot={bot_id or '-'} type={vote_type}")
 
         if user_id:
             # Simpan ke cache dan JSON
