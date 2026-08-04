@@ -6033,6 +6033,7 @@ def create_vote_webhook_app():
     app = Flask(__name__)
 
     @app.route("/dblwebhook", methods=["POST"])
+    @app.route("/webhook", methods=["POST"])  # alias — Top.gg lo kepasang ke path ini
     def dbl_webhook():
         # Validasi password webhook
         auth = flask_request.headers.get("Authorization", "")
@@ -6095,7 +6096,7 @@ async def run_flask_webhook():
 
     thread = threading.Thread(target=run_app, daemon=True)
     thread.start()
-    print(f"✅ Vote webhook server berjalan di port {PORT} → /dblwebhook")
+    print(f"✅ Vote webhook server berjalan di port {PORT} → /dblwebhook & /webhook")
 
 # ===================== ERROR HANDLERS =====================
 @bot.event
