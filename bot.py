@@ -6116,6 +6116,20 @@ async def on_command_error(ctx, error):
     else:
         print(f"Error: {error}")
 
+# ===================== TRADE SYSTEM (file terpisah: trade_system.py) =====================
+from trade_system import setup_trade
+setup_trade(bot, {
+    "get_user_fishing":   get_user_fishing,
+    "save_user_fishing":  save_user_fishing,
+    "get_fishing_config": get_fishing_config,
+    "emoji":              emoji,
+    "DARK_RED":           DARK_RED,
+    "MATERIAL_NAME":      MATERIAL_NAME,
+    "MATERIAL_EMOJI":     MATERIAL_EMOJI,
+    "check_maintenance":  check_maintenance,
+    "check_premium_gate": check_premium_gate,
+})
+
 # ===================== RUN =====================
 if __name__ == "__main__":
     bot.run(BOT_TOKEN)
