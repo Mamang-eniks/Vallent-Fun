@@ -5613,6 +5613,7 @@ async def help_cmd(ctx):
         ("💰 Jual Ikan", "Buka `Inventori` di panel `fish` → tombol **Jual Semua** atau dropdown buat jual 1 jenis ikan"),
         ("📖 Koleksi & Index", "`koleksi [@user]` — Ikan/rod yang UDAH dipunya\n`index [@user]` — Semua ikan/rod termasuk yang BELUM didapet"),
         ("🔨 Tempa & Trade", "`tempa` — Upgrade rod pake Serpihan Tempa\n`trade @user` — Ajak trade item (ikan/rod/koin/material)"),
+        ("💣 Mines", "`mines <taruhan> [bom]` — Buka kotak, makin banyak aman makin gede kalinya. Cash Out kapan aja!"),
         ("🎰 Spin Wheel", "`spin` / `/spin` — Putar pake koin, siapa tau dapet rod langka!"),
         ("🧠 Tebak-Tebakan", "`tebak` `addtebak` `listtebak` `removetebak` | `/tebak` (Arena) `/tambahsoal`"),
         ("⚠️ Mod", "`warn` `warns` `kick` `ban` `timeout` `move` `clear`"),
@@ -6559,6 +6560,17 @@ setup_trade(bot, {
     "DARK_RED":           DARK_RED,
     "MATERIAL_NAME":      MATERIAL_NAME,
     "MATERIAL_EMOJI":     MATERIAL_EMOJI,
+    "check_maintenance":  check_maintenance,
+    "check_premium_gate": check_premium_gate,
+})
+
+# ===================== MINES GAME (file terpisah: mines_game.py) =====================
+from mines_game import setup_mines
+setup_mines(bot, {
+    "get_user_fishing":   get_user_fishing,
+    "save_user_fishing":  save_user_fishing,
+    "emoji":              emoji,
+    "DARK_RED":           DARK_RED,
     "check_maintenance":  check_maintenance,
     "check_premium_gate": check_premium_gate,
 })
