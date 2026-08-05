@@ -1072,7 +1072,7 @@ def render_leaderboard_card(title: str, entries: list) -> io.BytesIO:
 
             rank_font = ck_font("Bold", 20)
             rank_color = medal_colors.get(rank, CK_TEXT_DIM)
-            rank_label = {1: "🥇", 2: "🥈", 3: "🥉"}.get(rank, f"#{rank}")
+            rank_label = f"#{rank}"
             d.text((av_x + av_size + 16, y + 10), rank_label, font=rank_font, fill=rank_color)
 
             name_font = ck_font("SemiBold", 22)
@@ -2577,7 +2577,8 @@ class InventoryView(discord.ui.LayoutView):
         if interaction.user.id != self.user_id:
             await interaction.response.send_message("❌ Privasi dong!", ephemeral=True)
             return
-        await interaction.response.send_message(view=CollectionView(self.user_id, interaction.user), ephemeral=True)
+        view = CollectionView(self.user_id, interaction.user)
+        await interaction.response.send_message(embed=view._build_embed(), view=view, ephemeral=True)
 
     async def open_lootbox_btn(self, interaction: discord.Interaction):
         if interaction.user.id != self.user_id:
@@ -3258,69 +3259,173 @@ class TempaView(discord.ui.LayoutView):
 
 # ===================== COLLECTION VIEW (Koleksi — buat pamer) =====================
 
-class CollectionView(discord.ui.LayoutView):
-    """Panel Koleksi: nunjukin ikan yang udah pernah ditangkap (per rarity)
-    + rod yang udah dimiliki. Bisa dibuka buat diri sendiri ATAU buat
-    ngeliat koleksi user lain (pamer!)."""
-    RARITY_ORDER = ["mythic", "legendary", "epic", "rare", "uncommon", "common"]
+RARITY_ORDER = ["mythic", "legendary", "epic", "rare", "uncommon", "common"]
 
-    def __init__(self, user_id: int, target_user: discord.abc.User, note: str | None = None):
-        super().__init__(timeout=120)
-        self.user_id     = user_id       # yang buka panel (buat cek privasi tombol, kalau ada)
+class CollectionView(discord.ui.View):
+    """Panel Koleksi — CUMA nampilin item yang user PUNYA (gak nampilin yang
+    belum didapet lagi, itu udah dipindah ke `dindex`). Dipisah per tab
+    (Ikan/Rod/Koin/Tempa) biar gak numpuk semua dalam 1 layar panjang."""
+    TABS = [("fish", "🐟 Ikan"), ("rod", "🎣 Rod"), ("coin", "🪙 Koin"), ("materials", f"{MATERIAL_EMOJI} Tempa")]
+
+    def __init__(self, user_id: int, target_user: discord.abc.User, tab: str = "fish"):
+        super().__init__(timeout=180)
+        self.user_id     = user_id       # yang buka panel (buat cek privasi klik tab)
         self.target_user = target_user   # yang koleksinya ditampilin
-        self.note        = note
+        self.tab         = tab
         self._build()
+
+    def _make_tab_cb(self, key: str):
+        async def cb(interaction: discord.Interaction):
+            if interaction.user.id != self.user_id:
+                await interaction.response.send_message("❌ Bukan panel lo!", ephemeral=True)
+                return
+            self.tab = key
+            self._build()
+            await interaction.response.edit_message(embed=self._build_embed(), view=self)
+        return cb
 
     def _build(self):
         self.clear_items()
-        udata      = get_user_fishing(str(self.target_user.id))
-        dex        = set(udata.get("fish_dex", []))
-        owned_rods = set(udata.get("owned_rods") or [])
-        fishes, rods, _ = get_fishing_config()
+        for key, label in self.TABS:
+            style = discord.ButtonStyle.primary if key == self.tab else discord.ButtonStyle.secondary
+            btn = discord.ui.Button(label=label, style=style, row=0)
+            btn.callback = self._make_tab_cb(key)
+            self.add_item(btn)
 
-        by_rarity = {}
-        for f in fishes:
-            if f.get("luck", 0) <= 0:
-                continue
-            r = get_rarity_from_luck(f["luck"])
-            by_rarity.setdefault(r, []).append(f)
+    def _build_embed(self) -> discord.Embed:
+        udata = get_user_fishing(str(self.target_user.id))
+        em = discord.Embed(title=f"📖 Koleksi {self.target_user.display_name}", color=DARK_RED)
 
-        total_fish  = sum(len(v) for v in by_rarity.values())
-        total_owned = len(dex)
-        pct = round(total_owned / total_fish * 100) if total_fish else 0
+        if self.tab == "fish":
+            dex = udata.get("fish_dex", [])
+            if not dex:
+                em.description = "_Belum punya ikan apapun. Ayo mancing dulu!_"
+            else:
+                inv_count = {}
+                for item in udata.get("inventory", []):
+                    inv_count[item] = inv_count.get(item, 0) + 1
+                fishes, _, _ = get_fishing_config()
+                fish_map  = {f["name"]: f for f in fishes}
+                by_rarity = {}
+                for name in dex:
+                    f = fish_map.get(name, {"emoji": "🐟", "luck": 0})
+                    r = get_rarity_from_luck(f.get("luck", 0)) if f.get("luck", 0) > 0 else "common"
+                    by_rarity.setdefault(r, []).append((name, f.get("emoji", "🐟")))
+                blocks = []
+                for r in RARITY_ORDER:
+                    items = by_rarity.get(r)
+                    if not items:
+                        continue
+                    label, _ = get_rarity_display(r)
+                    sub = [f"{ic} **{nm}** — kepegang di inventori: x{inv_count.get(nm, 0)}" for nm, ic in items]
+                    blocks.append(f"**{label}**\n" + "\n".join(sub))
+                em.description = "\n\n".join(blocks)
+            em.set_footer(text=f"Total jenis ikan yang pernah didapet: {len(dex)} • Ketik `dindex` buat liat yang belum didapet")
 
-        lines = []
-        for r in self.RARITY_ORDER:
-            fs = by_rarity.get(r, [])
-            if not fs:
-                continue
-            label, _ = get_rarity_display(r)
-            got = sum(1 for f in fs if f["name"] in dex)
-            lines.append(f"**{label}** ({got}/{len(fs)})")
-            for f in fs:
-                mark = "✅" if f["name"] in dex else "❔"
-                shown_name = f["name"] if f["name"] in dex else "???"
-                lines.append(f"{mark} {f.get('emoji', '🐟')} {shown_name}")
+        elif self.tab == "rod":
+            owned_rods = udata.get("owned_rods") or []
+            if not owned_rods:
+                em.description = "_Belum punya rod apapun._"
+            else:
+                _, rods, _ = get_fishing_config()
+                rod_map = {r["name"]: r for r in rods}
+                lines = []
+                for name in owned_rods:
+                    r = rod_map.get(name, {})
+                    level    = udata.get("rod_levels", {}).get(name, 0)
+                    eff_luck = get_rod_effective_luck(udata, name)
+                    mark = " ✅ *(sedang dipakai)*" if name == udata.get("rod") else ""
+                    lines.append(f"{r.get('emoji') or emoji('fish')} **{name}** — Lv.{level} (+{eff_luck:.1f}% luck){mark}")
+                em.description = "\n".join(lines)
+            em.set_footer(text=f"Total rod dimiliki: {len(owned_rods)} • Ketik `dindex` buat liat yang belum didapet")
 
-        rod_lines = []
-        for r in rods:
-            mark = "✅" if r["name"] in owned_rods else "❔"
-            rod_lines.append(f"{mark} {r.get('emoji', emoji('fish'))} {r['name']}")
+        elif self.tab == "coin":
+            em.description = f"## {emoji('coin')} {udata['coins']:,}".replace(",", ".") + " Koin"
+            em.set_footer(text="Cek `dshop` buat belanja, atau `dspin` buat coba peruntungan.")
 
-        desc = (
-            f"### 📖 Koleksi {self.target_user.display_name}\n"
-            f"**Ikan:** {total_owned}/{total_fish} ({pct}%) | **Rod dimiliki:** {len(owned_rods)}/{len(rods)}\n"
-        )
-        if self.note:
-            desc = f"{self.note}\n\n{desc}"
+        else:  # materials
+            em.description = f"## {MATERIAL_EMOJI} {udata.get('materials', 0)}x {MATERIAL_NAME}"
+            em.set_footer(text="Dipake buat Tempa (upgrade rod) lewat `dtempa` — didapet dari Lootbox/Crate.")
 
-        container = discord.ui.Container(accent_colour=DARK_RED)
-        container.add_item(discord.ui.TextDisplay(desc))
-        container.add_item(discord.ui.Separator())
-        container.add_item(discord.ui.TextDisplay("**🐟 Ikan Dex**\n" + "\n".join(lines)))
-        container.add_item(discord.ui.Separator(spacing=discord.SeparatorSpacing.small))
-        container.add_item(discord.ui.TextDisplay("**🎣 Rod Dimiliki**\n" + "\n".join(rod_lines)))
-        self.add_item(container)
+        return em
+
+
+class IndexView(discord.ui.View):
+    """Panel Index — nunjukin SEMUA ikan & rod yang ADA di game, termasuk
+    yang BELUM pernah didapet (ditandain ❔ ???). Beda sama Koleksi yang cuma
+    nampilin punya sendiri; ini buat liat progress lengkap/referensi."""
+    TABS = [("fish", "🐟 Ikan"), ("rod", "🎣 Rod")]
+
+    def __init__(self, user_id: int, target_user: discord.abc.User, tab: str = "fish"):
+        super().__init__(timeout=180)
+        self.user_id     = user_id
+        self.target_user = target_user
+        self.tab         = tab
+        self._build()
+
+    def _make_tab_cb(self, key: str):
+        async def cb(interaction: discord.Interaction):
+            if interaction.user.id != self.user_id:
+                await interaction.response.send_message("❌ Bukan panel lo!", ephemeral=True)
+                return
+            self.tab = key
+            self._build()
+            await interaction.response.edit_message(embed=self._build_embed(), view=self)
+        return cb
+
+    def _build(self):
+        self.clear_items()
+        for key, label in self.TABS:
+            style = discord.ButtonStyle.primary if key == self.tab else discord.ButtonStyle.secondary
+            btn = discord.ui.Button(label=label, style=style, row=0)
+            btn.callback = self._make_tab_cb(key)
+            self.add_item(btn)
+
+    def _build_embed(self) -> discord.Embed:
+        udata = get_user_fishing(str(self.target_user.id))
+        em = discord.Embed(title=f"📚 Index {self.target_user.display_name}", color=DARK_RED)
+
+        if self.tab == "fish":
+            dex = set(udata.get("fish_dex", []))
+            fishes, _, _ = get_fishing_config()
+            by_rarity = {}
+            for f in fishes:
+                if f.get("luck", 0) <= 0:
+                    continue
+                r = get_rarity_from_luck(f["luck"])
+                by_rarity.setdefault(r, []).append(f)
+            total_fish  = sum(len(v) for v in by_rarity.values())
+            total_owned = len(dex)
+            blocks = []
+            for r in RARITY_ORDER:
+                fs = by_rarity.get(r, [])
+                if not fs:
+                    continue
+                label, _ = get_rarity_display(r)
+                got = sum(1 for f in fs if f["name"] in dex)
+                sub = []
+                for f in fs:
+                    if f["name"] in dex:
+                        sub.append(f"✅ {f.get('emoji', '🐟')} {f['name']}")
+                    else:
+                        sub.append("❔ ???")
+                blocks.append(f"**{label}** ({got}/{len(fs)})\n" + "\n".join(sub))
+            em.description = "\n\n".join(blocks)
+            pct = round(total_owned / total_fish * 100) if total_fish else 0
+            em.set_footer(text=f"Progress: {total_owned}/{total_fish} ikan ({pct}%) • Ketik `dkoleksi` buat detail yang UDAH dipunya")
+        else:
+            owned_rods = set(udata.get("owned_rods") or [])
+            _, rods, _ = get_fishing_config()
+            lines = []
+            for r in rods:
+                if r["name"] in owned_rods:
+                    lines.append(f"✅ {r.get('emoji') or emoji('fish')} {r['name']}")
+                else:
+                    lines.append("❔ ???")
+            em.description = "\n".join(lines)
+            em.set_footer(text=f"Progress: {len(owned_rods)}/{len(rods)} rod • Ketik `dkoleksi` buat detail yang UDAH dipunya")
+
+        return em
 
 # ===================== FISHING SETUP PANEL (Owner Only) =====================
 
@@ -3447,6 +3552,97 @@ class FishingSetupView(discord.ui.View):
             return
         save_fishing_config(DEFAULT_FISHES, DEFAULT_RODS, DEFAULT_BAITS)
         await interaction.response.send_message("✅ Fishing config direset ke default!", ephemeral=True)
+
+    # ---- Tambah 1 item (append, gak perlu ketik ulang semua list dari awal) ----
+
+    async def _add_one(self, interaction: discord.Interaction, kind: str, prompt_fmt: str, example: str, n_fields: int, build_item, list_index: int):
+        if interaction.user.id != OWNER_ID:
+            await interaction.response.send_message("❌ Hanya Owner Bot yang bisa mengatur fishing!", ephemeral=True)
+            return
+        await interaction.response.send_message(
+            f"➕ **Tambah {kind}** — format: `{prompt_fmt}`\nContoh: `{example}`\n"
+            f"⚠️ Kalau nama-nya udah ada, datanya bakal DI-UPDATE (bukan dobel). Kirim dalam 60 detik.",
+            ephemeral=True
+        )
+        try:
+            msg   = await bot.wait_for("message", check=lambda m: m.author.id == interaction.user.id, timeout=60)
+            parts = [p.strip() for p in msg.content.strip().split("|")]
+            if len(parts) < n_fields:
+                await interaction.followup.send(f"❌ Format salah! Butuh {n_fields} bagian dipisah `|`.", ephemeral=True)
+                return
+            item = build_item(parts)
+            cfg = list(get_fishing_config())
+            lst = cfg[list_index]
+            existing = next((x for x in lst if x["name"] == item["name"]), None)
+            if existing:
+                lst[lst.index(existing)] = item
+                verb = "diupdate"
+            else:
+                lst.append(item)
+                verb = "ditambahin"
+            save_fishing_config(*cfg)
+            await interaction.followup.send(f"✅ **{item['name']}** berhasil {verb}!", ephemeral=True)
+        except (ValueError, IndexError):
+            await interaction.followup.send("❌ Format value salah (angka harus angka)!", ephemeral=True)
+        except asyncio.TimeoutError:
+            await interaction.followup.send("⏰ Timeout!", ephemeral=True)
+
+    async def _remove_one(self, interaction: discord.Interaction, kind: str, list_index: int):
+        if interaction.user.id != OWNER_ID:
+            await interaction.response.send_message("❌ Hanya Owner Bot yang bisa mengatur fishing!", ephemeral=True)
+            return
+        cfg = list(get_fishing_config())
+        lst = cfg[list_index]
+        names = ", ".join(x["name"] for x in lst) or "-"
+        await interaction.response.send_message(
+            f"➖ Ketik **nama {kind}** yang mau dihapus (persis sama, case-insensitive):\n`{names}`\nKirim dalam 60 detik.",
+            ephemeral=True
+        )
+        try:
+            msg  = await bot.wait_for("message", check=lambda m: m.author.id == interaction.user.id, timeout=60)
+            name = msg.content.strip()
+            match = next((x for x in lst if x["name"].lower() == name.lower()), None)
+            if not match:
+                await interaction.followup.send(f"❌ **{name}** gak ketemu di daftar {kind}!", ephemeral=True)
+                return
+            lst.remove(match)
+            save_fishing_config(*cfg)
+            await interaction.followup.send(f"✅ **{match['name']}** berhasil dihapus dari daftar {kind}!", ephemeral=True)
+        except asyncio.TimeoutError:
+            await interaction.followup.send("⏰ Timeout!", ephemeral=True)
+
+    @discord.ui.button(label="Tambah Ikan", emoji="➕", style=discord.ButtonStyle.success, row=2)
+    async def add_fish_one(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self._add_one(
+            interaction, "Ikan", "nama|emoji|sell_price|luck_persen", "Ikan Kakap|🐟|80|8",
+            4, lambda p: {"name": p[0], "emoji": p[1], "sell_price": int(p[2]), "luck": float(p[3])}, 0
+        )
+
+    @discord.ui.button(label="Tambah Rod", emoji="➕", style=discord.ButtonStyle.success, row=2)
+    async def add_rod_one(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self._add_one(
+            interaction, "Rod", "nama|emoji|tier|price|luck_bonus", "Pancing Emas|🎣|4|1200|20",
+            5, lambda p: {"name": p[0], "emoji": p[1], "tier": int(p[2]), "price": int(p[3]), "luck_bonus": float(p[4])}, 1
+        )
+
+    @discord.ui.button(label="Tambah Umpan", emoji="➕", style=discord.ButtonStyle.success, row=2)
+    async def add_bait_one(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self._add_one(
+            interaction, "Umpan", "nama|emoji|price|luck_bonus", "Udang Segar|🦐|70|12",
+            4, lambda p: {"name": p[0], "emoji": p[1], "price": int(p[2]), "luck_bonus": float(p[3])}, 2
+        )
+
+    @discord.ui.button(label="Hapus Ikan", emoji="➖", style=discord.ButtonStyle.danger, row=3)
+    async def remove_fish_one(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self._remove_one(interaction, "Ikan", 0)
+
+    @discord.ui.button(label="Hapus Rod", emoji="➖", style=discord.ButtonStyle.danger, row=3)
+    async def remove_rod_one(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self._remove_one(interaction, "Rod", 1)
+
+    @discord.ui.button(label="Hapus Umpan", emoji="➖", style=discord.ButtonStyle.danger, row=3)
+    async def remove_bait_one(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self._remove_one(interaction, "Umpan", 2)
 
 async def fishing_setup_panel(ctx):
     fishes, rods, baits = get_fishing_config()
@@ -4349,14 +4545,25 @@ async def shop_cmd(ctx):
     if await check_premium_gate(ctx, "shop"): return
     await ctx.reply(view=ShopBuyView(ctx.author.id))
 
-@bot.command(name="collection", aliases=["koleksi", "dex", "fishdex"])
+@bot.command(name="collection", aliases=["koleksi"])
 async def collection_cmd(ctx, member: discord.Member = None):
-    """Liat koleksi ikan & rod. Bisa liat punya orang lain buat pamer:
-    `dkoleksi @user`"""
+    """Liat koleksi ikan & rod YANG DIPUNYA doang. Bisa liat punya orang lain
+    buat pamer: `dkoleksi @user`. Buat liat yang belum didapet, pake `dindex`."""
     if await check_maintenance(ctx): return
     if await check_premium_gate(ctx, "collection"): return
     target = member or ctx.author
-    await ctx.reply(view=CollectionView(ctx.author.id, target))
+    view = CollectionView(ctx.author.id, target)
+    await ctx.reply(embed=view._build_embed(), view=view)
+
+@bot.command(name="index", aliases=["dex", "fishdex"])
+async def index_cmd(ctx, member: discord.Member = None):
+    """Liat SEMUA ikan & rod yang ada di game, termasuk yang BELUM didapet
+    (ditandain ❔). Bisa liat progress orang lain juga: `dindex @user`."""
+    if await check_maintenance(ctx): return
+    if await check_premium_gate(ctx, "index"): return
+    target = member or ctx.author
+    view = IndexView(ctx.author.id, target)
+    await ctx.reply(embed=view._build_embed(), view=view)
 
 @bot.command(name="tempa", aliases=["forge", "upgraderod"])
 async def tempa_cmd(ctx):
@@ -5404,6 +5611,8 @@ async def help_cmd(ctx):
     fields = [
         ("🎣 Fishing", f"`fish` — Mancing (ikan masuk inventori)\n`coins` `daily` — Cek koin & klaim harian {emoji('coin')}\n`quest` — Panel checklist Daily/Weekly/Quests (gambar)"),
         ("💰 Jual Ikan", "Buka `Inventori` di panel `fish` → tombol **Jual Semua** atau dropdown buat jual 1 jenis ikan"),
+        ("📖 Koleksi & Index", "`koleksi [@user]` — Ikan/rod yang UDAH dipunya\n`index [@user]` — Semua ikan/rod termasuk yang BELUM didapet"),
+        ("🔨 Tempa & Trade", "`tempa` — Upgrade rod pake Serpihan Tempa\n`trade @user` — Ajak trade item (ikan/rod/koin/material)"),
         ("🎰 Spin Wheel", "`spin` / `/spin` — Putar pake koin, siapa tau dapet rod langka!"),
         ("🧠 Tebak-Tebakan", "`tebak` `addtebak` `listtebak` `removetebak` | `/tebak` (Arena) `/tambahsoal`"),
         ("⚠️ Mod", "`warn` `warns` `kick` `ban` `timeout` `move` `clear`"),
@@ -5949,7 +6158,7 @@ async def leaderboard_cmd(ctx):
     if await check_maintenance(ctx): return
     if await check_premium_gate(ctx, "leaderboard"): return
     entries = await build_leaderboard_entries(bot)
-    buf  = render_leaderboard_card(f"{emoji('coin')} Leaderboard Koin — Global", entries)
+    buf  = render_leaderboard_card("Leaderboard Koin — Global", entries)
     file = discord.File(buf, filename="leaderboard.png")
     await ctx.reply(file=file)
 
@@ -5958,7 +6167,7 @@ async def slash_leaderboard(interaction: discord.Interaction):
     if await check_premium_gate_slash(interaction, "leaderboard"): return
     await interaction.response.defer()
     entries = await build_leaderboard_entries(bot)
-    buf  = render_leaderboard_card(f"{emoji('coin')} Leaderboard Koin — Global", entries)
+    buf  = render_leaderboard_card("Leaderboard Koin — Global", entries)
     file = discord.File(buf, filename="leaderboard.png")
     await interaction.followup.send(file=file)
 
