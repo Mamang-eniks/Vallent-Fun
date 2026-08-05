@@ -45,7 +45,7 @@ GRID_ROWS     = 4
 GRID_COLS     = 5
 TOTAL_TILES   = GRID_ROWS * GRID_COLS   # 20 kotak — pas 4 baris tile + 1 baris tombol Cash Out (max 5 row Discord)
 HOUSE_EDGE    = 0.97                    # bot ambil untung 3% jangka panjang
-DEFAULT_MINES = 3
+DEFAULT_MINES = 6
 MINES_TIMEOUT = 180                     # detik, auto cash-out/refund kalau didiemin
 
 
@@ -159,7 +159,7 @@ def setup_mines(bot, deps: dict):
                 active_games.pop(session.user_id, None)
                 view.reveal_all(hit_idx=self.idx)
                 await interaction.response.edit_message(
-                    embed=build_embed(session, f"💥 **KENA BOM!** Taruhan **{session.bet}** {emoji('coin')} hangus semuanya."),
+                    embed=build_embed(session, f"💥 **HAHA! KENA BOM!** Taruhan **{session.bet}** {emoji('coin')} hangus semuanya."),
                     view=view
                 )
                 return
