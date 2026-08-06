@@ -204,31 +204,51 @@ def setup_islands(bot, deps: dict):
             if not await self._owner_only(interaction):
                 return
             await interaction.response.send_message(
-                f"➕ **Tambah ikan ke Pulau {self.island_id}** — format: `nama|emoji|sell_price|luck_persen`\n"
-                f"Contoh: `Ikan Karang|🐠|60|10`\n"
-                f"⚠️ Kalau nama udah ada di pulau ini, datanya di-UPDATE (bukan dobel). Kirim dalam 60 detik.",
+                f"➕ **Tambah ikan ke Pulau {self.island_id}** — format tiap baris: `nama|emoji|sell_price|luck_persen`\n"
+                f"Bisa kirim **BANYAK BARIS SEKALIGUS** dalam 1 pesan (1 ikan per baris), gak perlu 1-1.\n"
+                f"Contoh:\n```Ikan Karang|🐠|60|10\nIkan Terumbu|🐡|90|6\nUdang Batu|🦐|40|15```\n"
+                f"⚠️ Kalau nama udah ada di pulau ini, datanya di-UPDATE (bukan dobel). Kirim dalam 90 detik.",
                 ephemeral=True
             )
             try:
-                msg = await bot.wait_for("message", check=lambda m: m.author.id == interaction.user.id, timeout=60)
-                parts = [p.strip() for p in msg.content.strip().split("|")]
-                if len(parts) < 4:
-                    await interaction.followup.send("❌ Format salah! Butuh 4 bagian dipisah `|`.", ephemeral=True)
-                    return
-                item = {"name": parts[0], "emoji": parts[1], "sell_price": int(parts[2]), "luck": float(parts[3])}
+                msg = await bot.wait_for("message", check=lambda m: m.author.id == interaction.user.id, timeout=90)
                 islands = get_island_config()
-                fishes = islands[str(self.island_id)]["fishes"]
-                existing = next((x for x in fishes if x["name"] == item["name"]), None)
-                if existing:
-                    fishes[fishes.index(existing)] = item
-                    verb = "diupdate"
-                else:
-                    fishes.append(item)
-                    verb = "ditambahin"
+                fishes  = islands[str(self.island_id)]["fishes"]
+                added, updated, skipped = [], [], []
+                for line in msg.content.strip().split("\n"):
+                    line = line.strip()
+                    if not line:
+                        continue
+                    parts = [p.strip() for p in line.split("|")]
+                    if len(parts) < 4:
+                        skipped.append(line)
+                        continue
+                    try:
+                        item = {"name": parts[0], "emoji": parts[1], "sell_price": int(parts[2]), "luck": float(parts[3])}
+                    except ValueError:
+                        skipped.append(line)
+                        continue
+                    existing = next((x for x in fishes if x["name"] == item["name"]), None)
+                    if existing:
+                        fishes[fishes.index(existing)] = item
+                        updated.append(item["name"])
+                    else:
+                        fishes.append(item)
+                        added.append(item["name"])
+
+                if not added and not updated:
+                    await interaction.followup.send("❌ Gak ada baris valid yang bisa disimpan! Cek lagi formatnya.", ephemeral=True)
+                    return
+
                 save_island_config(islands)
-                await interaction.followup.send(f"✅ **{item['name']}** berhasil {verb} ke Pulau {self.island_id}!", ephemeral=True)
-            except (ValueError, IndexError):
-                await interaction.followup.send("❌ Format value salah (angka harus angka)!", ephemeral=True)
+                parts_msg = []
+                if added:
+                    parts_msg.append(f"✅ **{len(added)} ikan ditambahin:** {', '.join(added)}")
+                if updated:
+                    parts_msg.append(f"🔄 **{len(updated)} ikan diupdate:** {', '.join(updated)}")
+                if skipped:
+                    parts_msg.append(f"⚠️ **{len(skipped)} baris dilewati** (format salah):\n```{chr(10).join(skipped[:10])}```")
+                await interaction.followup.send("\n".join(parts_msg), ephemeral=True)
             except asyncio.TimeoutError:
                 await interaction.followup.send("⏰ Timeout!", ephemeral=True)
 
