@@ -179,10 +179,14 @@ def get_fishing_config():
 def save_fishing_config(fishes, rods, baits):
     save_json("fishing_config.json", {"fishes": fishes, "rods": rods, "baits": baits})
 
-def do_fish_roll(rod_name: str, bait_name: str | None, extra_luck_pct: float = 0.0):
+def do_fish_roll(rod_name: str, bait_name: str | None, extra_luck_pct: float = 0.0, fish_pool: list | None = None):
     """Lakukan roll mancing. Return (fish_dict, rarity_str).
-    extra_luck_pct = bonus tambahan dari Tempa (upgrade rod) + luck boost lootbox."""
+    extra_luck_pct = bonus tambahan dari Tempa (upgrade rod) + luck boost lootbox.
+    fish_pool = daftar ikan custom (misal dari pulau yang lagi ditempatin user).
+    Kalau None, fallback ke daftar ikan global (dsetfishing)."""
     fishes, rods, baits = get_fishing_config()
+    if fish_pool:
+        fishes = fish_pool
 
     # Cari rod
     rod = next((r for r in rods if r["name"] == rod_name), rods[0])
@@ -2611,6 +2615,16 @@ class InventoryView(discord.ui.LayoutView):
         await interaction.response.edit_message(view=self)
 
 
+# Placeholder — bakal di-assign ulang jadi hasil setup_islands() di paling
+# bawah file. Ditaro di sini (sebelum FishingMainView) cuma buat dokumentasi;
+# karena Python resolve nama global saat DIPANGGIL (bukan saat class
+# didefinisiin), assignment ulang di bawah tetep kepakai pas runtime.
+island_hooks = {
+    "get_current_fish_pool": lambda uid: None,
+    "record_catch_and_maybe_advance": lambda uid: None,
+    "get_island_status_line": lambda uid: "",
+}
+
 class FishingMainView(discord.ui.LayoutView):
     """Panel utama fishing, full Components V2 (Container + TextDisplay + ActionRow)."""
     def __init__(self, user_id, body_text: str | None = None):
@@ -2644,7 +2658,8 @@ class FishingMainView(discord.ui.LayoutView):
     def _build(self):
         self.clear_items()
         container = discord.ui.Container(accent_colour=DARK_RED)
-        header_text = f"### {emoji('fish')} StartDoom Fishing\n{self.body_text}"
+        island_line = island_hooks["get_island_status_line"](str(self.user_id))
+        header_text = f"### {emoji('fish')} StartDoom Fishing\n{island_line}\n{self.body_text}"
         if self.last_catch:
             # Ada tangkapan terakhir → tampilin thumbnail-nya (lihat prioritas
             # di _thumb_url: emoji ikan itu sendiri > emoji rarity > card generate).
@@ -2726,8 +2741,9 @@ class FishingMainView(discord.ui.LayoutView):
                 udata.pop("luck_boost_catches", None)
                 udata.pop("luck_boost_pct", None)
 
+        fish_pool = island_hooks["get_current_fish_pool"](uid)
         caught, rarity = do_fish_roll(udata.get("rod", "Pancing Bambu"), used_bait,
-                                       extra_luck_pct=tempa_bonus + boost_pct)
+                                       extra_luck_pct=tempa_bonus + boost_pct, fish_pool=fish_pool)
         # Ikan GAK auto-sell lagi — numpuk di inventori, dijual manual lewat
         # tombol "Jual" di panel Inventori (lihat InventoryView / sell_all_fish).
         udata["total_catch"] += 1
@@ -2736,6 +2752,7 @@ class FishingMainView(discord.ui.LayoutView):
         if is_new_dex:
             udata.setdefault("fish_dex", []).append(caught["name"])
         save_user_fishing(uid, udata)
+        island_msg = island_hooks["record_catch_and_maybe_advance"](uid)
         drop_msgs = roll_fishing_drops(uid)
         bump_checklist(uid, "fish", 1)
         bump_weekly(uid, "fish", 1)
@@ -2758,6 +2775,8 @@ class FishingMainView(discord.ui.LayoutView):
         extra_lines = ""
         if is_new_dex:
             extra_lines += "\n🆕 Ikan baru di Koleksi lo! Cek `dkoleksi`."
+        if island_msg:
+            extra_lines += f"\n{island_msg}"
 
         self.last_catch = (caught, rarity)  # buat generate thumbnail gambar
 
@@ -5615,6 +5634,7 @@ async def help_cmd(ctx):
         ("🔨 Tempa & Trade", "`tempa` — Upgrade rod pake Serpihan Tempa\n`trade @user` — Ajak trade item (ikan/rod/koin/material)"),
         ("💣 Mines", "`mines <taruhan> [bom]` — Buka kotak, makin banyak aman makin gede kalinya. Cash Out kapan aja!"),
         ("📊 Level & XP", "`level` / `rank [@user]` — Rank card (dapet XP dari ngobrol)\n`leveltoggle on/off` `levelchannel #channel` — Admin server"),
+        ("🏝️ Pulau", "`pulau [@user]` — Progress pulau (ikan pulau ini harus lengkap dulu baru bisa lanjut ke pulau berikutnya)"),
         ("🎰 Spin Wheel", "`spin` / `/spin` — Putar pake koin, siapa tau dapet rod langka!"),
         ("🧠 Tebak-Tebakan", "`tebak` `addtebak` `listtebak` `removetebak` | `/tebak` (Arena) `/tambahsoal`"),
         ("⚠️ Mod", "`warn` `warns` `kick` `ban` `timeout` `move` `clear`"),
@@ -6584,6 +6604,19 @@ setup_leveling(bot, {
     "get_fishing_data":   get_fishing_data,
     "emoji":              emoji,
     "DARK_RED":           DARK_RED,
+    "check_maintenance":  check_maintenance,
+    "check_premium_gate": check_premium_gate,
+    "load_json":          load_json,
+    "save_json":          save_json,
+})
+
+# ===================== ISLAND SYSTEM (file terpisah: island_system.py) =====================
+from island_system import setup_islands
+island_hooks = setup_islands(bot, {
+    "get_user_fishing":   get_user_fishing,
+    "emoji":              emoji,
+    "DARK_RED":           DARK_RED,
+    "OWNER_ID":           OWNER_ID,
     "check_maintenance":  check_maintenance,
     "check_premium_gate": check_premium_gate,
     "load_json":          load_json,
