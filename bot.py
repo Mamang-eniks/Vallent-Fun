@@ -5614,6 +5614,7 @@ async def help_cmd(ctx):
         ("📖 Koleksi & Index", "`koleksi [@user]` — Ikan/rod yang UDAH dipunya\n`index [@user]` — Semua ikan/rod termasuk yang BELUM didapet"),
         ("🔨 Tempa & Trade", "`tempa` — Upgrade rod pake Serpihan Tempa\n`trade @user` — Ajak trade item (ikan/rod/koin/material)"),
         ("💣 Mines", "`mines <taruhan> [bom]` — Buka kotak, makin banyak aman makin gede kalinya. Cash Out kapan aja!"),
+        ("📊 Level & XP", "`level` / `rank [@user]` — Rank card (dapet XP dari ngobrol)\n`leveltoggle on/off` `levelchannel #channel` — Admin server"),
         ("🎰 Spin Wheel", "`spin` / `/spin` — Putar pake koin, siapa tau dapet rod langka!"),
         ("🧠 Tebak-Tebakan", "`tebak` `addtebak` `listtebak` `removetebak` | `/tebak` (Arena) `/tambahsoal`"),
         ("⚠️ Mod", "`warn` `warns` `kick` `ban` `timeout` `move` `clear`"),
@@ -6573,6 +6574,20 @@ setup_mines(bot, {
     "DARK_RED":           DARK_RED,
     "check_maintenance":  check_maintenance,
     "check_premium_gate": check_premium_gate,
+})
+
+# ===================== LEVELING SYSTEM (file terpisah: leveling_system.py) =====================
+from leveling_system import setup_leveling
+setup_leveling(bot, {
+    "get_user_fishing":   get_user_fishing,
+    "save_user_fishing":  save_user_fishing,
+    "get_fishing_data":   get_fishing_data,
+    "emoji":              emoji,
+    "DARK_RED":           DARK_RED,
+    "check_maintenance":  check_maintenance,
+    "check_premium_gate": check_premium_gate,
+    "load_json":          load_json,
+    "save_json":          save_json,
 })
 
 # ===================== RUN =====================
