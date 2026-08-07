@@ -41,11 +41,11 @@ import discord
 import random
 
 
-GRID_ROWS     = 4
-GRID_COLS     = 5
+GRID_ROWS     = 3
+GRID_COLS     = 3
 TOTAL_TILES   = GRID_ROWS * GRID_COLS   # 20 kotak — pas 4 baris tile + 1 baris tombol Cash Out (max 5 row Discord)
 HOUSE_EDGE    = 0.97                    # bot ambil untung 3% jangka panjang
-DEFAULT_MINES = 6
+DEFAULT_MINES = 3
 MINES_TIMEOUT = 180                     # detik, auto cash-out/refund kalau didiemin
 
 
