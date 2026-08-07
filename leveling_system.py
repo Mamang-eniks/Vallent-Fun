@@ -83,8 +83,8 @@ def _paste_avatar(img: Image.Image, avatar_bytes: bytes | None, x: int, y: int, 
 
 
 # ===================== XP & LEVEL MATH =====================
-XP_MESSAGE_COOLDOWN = 60        # detik, minimal jeda per user biar dapet XP lagi
-XP_MIN, XP_MAX       = 15, 25   # XP acak per pesan valid
+XP_MESSAGE_COOLDOWN = 80        # detik, minimal jeda per user biar dapet XP lagi
+XP_MIN, XP_MAX       = 45, 75   # XP acak per pesan valid
 
 LEVEL_TITLES = [
     (0,   "Newbie Server"),
@@ -124,7 +124,7 @@ def get_level_from_xp(total_xp: int):
 def level_up_rewards(new_level: int) -> dict:
     """Reward pas naik level — disambungin ke ekonomi fishing yang udah ada."""
     return {
-        "coins": 200 * new_level,
+        "coins": 1500 * new_level,
         "materials": 3,
         "lootbox": 1 if new_level % 5 == 0 else 0,
     }
